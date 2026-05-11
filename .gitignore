@@ -1,0 +1,9 @@
+node_modules/
+dist/
+test-results/
+.idea/
+.vscode/
+.env
+.env.local
+.env.*.local
+*.log
