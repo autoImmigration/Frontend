@@ -575,6 +575,12 @@ select:focus {
   color: var(--neutral);
 }
 
+.statusError {
+  border-color: #f1c6cf;
+  background: #fff4f6;
+  color: #b42318;
+}
+
 .primaryButton,
 .secondaryButton,
 .tableLinkButton {
@@ -772,8 +778,124 @@ select:focus {
   gap: 12px;
 }
 
+.uploadDropzone.isUploading {
+  border-color: #93c5fd;
+  background: #f3f8ff;
+}
+
 .uploadDropzone strong {
   font-size: 18px;
+}
+
+.filePicker {
+  position: relative;
+  display: inline-flex;
+}
+
+.filePicker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.filePicker input:disabled {
+  cursor: wait;
+}
+
+.uploadHint {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.uploadStatusCard {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.uploadStatusCard.isUploading {
+  border-color: #cfe0fb;
+  background: #f6faff;
+}
+
+.uploadStatusCard.isSuccess {
+  border-color: #cde8d6;
+  background: #f3fbf6;
+}
+
+.uploadStatusCard.isError {
+  border-color: #f1c6cf;
+  background: #fff6f7;
+}
+
+.uploadStatusHeader {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.uploadStatusHeader strong {
+  font-size: 15px;
+}
+
+.uploadStatusHeader span,
+.uploadStatusMeta span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.uploadStatusCard p {
+  margin: 0;
+  color: var(--text-main);
+}
+
+.uploadStatusMeta,
+.uploadStatusActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.uploadDropzone.hasFile {
+  border-style: solid;
+  border-color: #86b5f8;
+  background: #f0f7ff;
+  min-height: 140px;
+}
+
+.selectedFileInfo {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+}
+
+.selectedFileInfo strong {
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.selectedFileInfo span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.uploadActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  gap: 12px;
 }
 
 .flowList {
@@ -916,10 +1038,166 @@ select:focus {
   line-height: 1.6;
 }
 
+.timelineList,
+.eventList {
+  display: grid;
+  gap: 12px;
+}
+
+.timelineStep,
+.jobMetricCard,
+.eventCard {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.timelineStep {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 16px;
+}
+
+.timelineStep.isDone {
+  border-color: #cfe0fb;
+  background: #f8fbff;
+}
+
+.timelineStep.isCurrent {
+  border-color: #bfd4f8;
+  background: #f1f6ff;
+}
+
+.timelineMarker {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: #e2e8f0;
+  color: #475569;
+  font-weight: 700;
+}
+
+.timelineStep.isDone .timelineMarker {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.timelineStep.isCurrent .timelineMarker {
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.12);
+}
+
+.timelineContent {
+  display: grid;
+  gap: 6px;
+}
+
+.timelineContent strong,
+.eventHeader strong,
+.jobMetricCard strong {
+  font-size: 15px;
+}
+
+.timelineContent p,
+.jobMetricCard p,
+.eventCard p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.jobMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.jobMetricCard {
+  padding: 16px;
+  display: grid;
+  gap: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.jobMetricCard span,
+.eventHeader span,
+.eventPill {
+  font-size: 12px;
+}
+
+.jobMetricCard span,
+.eventHeader span {
+  color: var(--text-soft);
+}
+
+.jobMetricCard strong {
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.eventCard {
+  padding: 16px 18px;
+  background: #fbfdff;
+}
+
+.eventCard.isPrimary {
+  border-color: #cfe0fb;
+  background: #f6faff;
+}
+
+.eventCard.isWarning {
+  border-color: #f2d4a1;
+  background: #fff9ef;
+}
+
+.eventCard.isError {
+  border-color: #f1c6cf;
+  background: #fff6f7;
+}
+
+.eventCard.isSuccess {
+  border-color: #cde8d6;
+  background: #f3fbf6;
+}
+
+.eventHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.eventMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.eventPill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--text-main);
+  font-weight: 700;
+}
+
 @media (max-width: 1180px) {
   .summaryStrip,
   .ruleGrid,
-  .scanGrid {
+  .scanGrid,
+  .jobMetricGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -964,7 +1242,8 @@ select:focus {
   .roleTabs,
   .ruleGrid,
   .detailInfoGrid,
-  .scanGrid {
+  .scanGrid,
+  .jobMetricGrid {
     grid-template-columns: 1fr;
   }
 

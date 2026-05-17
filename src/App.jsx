@@ -1,15 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  agencyApplications,
-  agencyUploadBatches,
   loginDefaults,
   nationalityOptions,
-  schoolStudents,
-  studentApplications,
-  studentProfile,
   uploadFlowSteps,
   zipRules,
 } from "./mockData.js";
+import {
+  fetchAgencyApplicationDetail,
+  fetchAgencyApplications,
+  fetchAgencyUploadBatchDetail,
+  fetchAgencyUploadBatches,
+  fetchMe,
+  fetchSchoolStudents,
+  lookupStudentAccess,
+  uploadAgencyBatchFile,
+} from "./api.js";
 
 const ROLE_LABELS = {
   student: "학생",
@@ -28,6 +33,14 @@ const STATUS_CLASS_MAP = {
   완료: "status statusSuccess",
   제출: "status statusSuccess",
   미제출: "status statusNeutral",
+  "준비 완료": "status statusNeutral",
+  "접수 완료": "status statusNeutral",
+  "업로드 완료": "status statusSuccess",
+  대기: "status statusNeutral",
+  "처리 중": "status statusNeutral",
+  "부분 완료": "status statusWarning",
+  실패: "status statusError",
+  중단: "status statusError",
 };
 
 const NAV_ITEMS = {
@@ -54,9 +67,48 @@ const AGENCY_SEARCH_OPTIONS = [
   { value: "coordinator", label: "담당자" },
 ];
 
+const ALL_FILTER = "전체";
+
 const emptyOrgForms = {
   school: { ...loginDefaults.school },
   agency: { ...loginDefaults.agency },
+};
+
+const EMPTY_UPLOAD_FEEDBACK = {
+  phase: "idle",
+  fileName: "",
+  message: "",
+  batch: null,
+};
+
+const EMPTY_UPLOAD_FORM = {
+  receiptDate: new Date().toISOString().split("T")[0],
+  schoolId: "",
+  receptionType: "일반",
+  applicationType: "신규",
+  affiliatedSchool: "",
+  schoolDivision: "학부",
+  revenue: "",
+  civilFee: "",
+};
+
+const BATCH_STATUS_LABELS = {
+  READY: "준비 완료",
+  RECEIVED: "접수 완료",
+  UPLOADED: "업로드 완료",
+  QUEUED: "대기",
+  PENDING: "대기",
+  PROCESSING: "처리 중",
+  RUNNING: "처리 중",
+  IN_PROGRESS: "처리 중",
+  COMPLETED: "완료",
+  SUCCESS: "완료",
+  SUCCEEDED: "완료",
+  PARTIAL_SUCCESS: "부분 완료",
+  FAILED: "실패",
+  ERROR: "실패",
+  CANCELED: "중단",
+  CANCELLED: "중단",
 };
 
 function countByStatus(items, status) {
@@ -79,19 +131,436 @@ function pageToActiveKey(page) {
   return page;
 }
 
-function buildSession(role, form) {
+function buildSession(role, payload) {
   if (role === "student") {
     return {
       role,
-      title: `${studentProfile.name} 학생`,
-      subtitle: `${studentProfile.schoolName} · ${studentProfile.term}`,
+      title: `${payload.name} 학생`,
+      subtitle: `${payload.schoolName} · ${payload.term}`,
     };
   }
 
   return {
     role,
-    title: `${ROLE_LABELS[role]} 운영 계정`,
-    subtitle: form.username,
+      title: `${ROLE_LABELS[role]} 운영 계정`,
+    subtitle: payload.username,
+    username: payload.username,
+    password: payload.password,
+  };
+}
+
+function normalizeBatchStatusLabel(status) {
+  if (!status) {
+    return "";
+  }
+
+  const normalizedStatus = String(status).trim();
+  const mappedStatus = BATCH_STATUS_LABELS[normalizedStatus.toUpperCase()];
+
+  return mappedStatus ?? normalizedStatus;
+}
+
+function buildBatchNote(batch, fallbackNote = "") {
+  if (typeof batch?.note === "string" && batch.note.trim()) {
+    return batch.note;
+  }
+
+  const uploadBatchStatus = normalizeBatchStatusLabel(
+    batch?.uploadBatchStatus ?? batch?.status,
+  );
+  const processingJobStatus = normalizeBatchStatusLabel(
+    batch?.processingJobStatus ?? batch?.jobStatus,
+  );
+
+  if (uploadBatchStatus && processingJobStatus) {
+    return `배치 ${uploadBatchStatus} · 작업 ${processingJobStatus}`;
+  }
+
+  if (processingJobStatus) {
+    return `처리 작업 ${processingJobStatus}`;
+  }
+
+  if (uploadBatchStatus) {
+    return `배치 상태 ${uploadBatchStatus}`;
+  }
+
+  return fallbackNote || "업로드가 접수되었습니다.";
+}
+
+function formatDisplayDateTime(value) {
+  if (!value) {
+    return "";
+  }
+
+  const normalizedValue = String(value).trim();
+  const match = normalizedValue.match(
+    /^(\d{4})[-.](\d{2})[-.](\d{2})(?:[T ](\d{2}):(\d{2}))?/,
+  );
+
+  if (!match) {
+    return normalizedValue;
+  }
+
+  const [, year, month, day, hour, minute] = match;
+
+  if (!hour || !minute) {
+    return `${year}.${month}.${day}`;
+  }
+
+  return `${year}.${month}.${day} ${hour}:${minute}`;
+}
+
+function hasTerminalProcessingStatus(status) {
+  return ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"].includes(status);
+}
+
+function hasTerminalBatchStatus(status) {
+  return ["COMPLETED", "NEEDS_REVIEW", "FAILED"].includes(status);
+}
+
+function buildBatchTimeline(batch) {
+  const hasJob = Boolean(batch.processingJobId);
+  const processingStatus = batch.processingJobStatusRaw;
+  const batchStatus = batch.uploadBatchStatusRaw;
+  const hasStarted = Boolean(batch.processingJobStartedAt);
+  const hasFinished =
+    Boolean(batch.processingJobFinishedAt) ||
+    hasTerminalProcessingStatus(processingStatus) ||
+    hasTerminalBatchStatus(batchStatus);
+  const isRunning =
+    processingStatus === "RUNNING" ||
+    batchStatus === "RUNNING" ||
+    batchStatus === "VALIDATING" ||
+    batchStatus === "FINALIZING";
+  const finalLabel =
+    processingStatus === "FAILED" || batchStatus === "FAILED"
+      ? "실패"
+      : processingStatus === "PARTIAL_SUCCESS" || batchStatus === "NEEDS_REVIEW"
+        ? "보완 필요"
+        : processingStatus === "SUCCEEDED" || batchStatus === "COMPLETED"
+          ? "완료"
+          : "대기";
+
+  return [
+    {
+      key: "upload",
+      title: "ZIP 업로드",
+      state: batch.uploadedAt ? "done" : "upcoming",
+      detail: batch.uploadedAt
+        ? `${batch.uploadedAt} 접수`
+        : "배치 업로드를 기다리는 단계입니다.",
+    },
+    {
+      key: "queue",
+      title: "처리 대기",
+      state: !hasJob ? "upcoming" : hasStarted || hasFinished ? "done" : "current",
+      detail: hasJob
+        ? `작업 ID ${batch.processingJobId}`
+        : "처리 작업이 아직 생성되지 않았습니다.",
+    },
+    {
+      key: "run",
+      title: "OCR / 문서 분리",
+      state: hasFinished ? "done" : isRunning ? "current" : "upcoming",
+      detail: hasStarted
+        ? `${batch.processingJobStartedAt} 시작`
+        : isRunning
+          ? "현재 문서 분리와 OCR 단계가 진행 중입니다."
+          : "Python 실행 전이라 아직 시작되지 않았습니다.",
+    },
+    {
+      key: "finish",
+      title: "최종 상태",
+      state: hasFinished ? "done" : "upcoming",
+      detail: hasFinished
+        ? `${finalLabel} · ${batch.note || batch.status}`
+        : "결과 수신 후 완료 / 보완 / 실패로 확정됩니다.",
+    },
+  ];
+}
+
+function buildBatchEvents(batch) {
+  const events = [];
+  const eventMeta = [];
+
+  if (batch.processingJobId) {
+    eventMeta.push(`작업 ID ${batch.processingJobId}`);
+  }
+  if (batch.processingJobAttemptNo) {
+    eventMeta.push(`시도 ${batch.processingJobAttemptNo}회`);
+  }
+
+  if (batch.uploadedAt) {
+    events.push({
+      key: "uploaded",
+      tone: "neutral",
+      time: batch.uploadedAt,
+      title: "ZIP 업로드 접수",
+      description: `${batch.fileName} 업로드가 접수되어 배치 ${batch.id}가 생성되었습니다.`,
+      meta: eventMeta,
+    });
+  }
+
+  if (batch.processingJobId) {
+    events.push({
+      key: "queued",
+      tone: "neutral",
+      time: batch.processingJobCreatedAt || batch.uploadedAt,
+      title: "처리 작업 생성",
+      description:
+        batch.processingJobStatusRaw === "QUEUED"
+          ? "현재 구현 범위에서는 업로드 후 작업 대기 상태까지 자동 반영됩니다."
+          : "배치에 연결된 처리 작업 메타데이터가 준비되었습니다.",
+      meta: [
+        batch.processingJobType || "OCR_BATCH",
+        batch.processingJobStatus ? `상태 ${batch.processingJobStatus}` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  if (batch.processingJobStartedAt) {
+    events.push({
+      key: "started",
+      tone: "primary",
+      time: batch.processingJobStartedAt,
+      title: "OCR 처리 시작",
+      description: batch.processingProvider
+        ? `${batch.processingProvider} provider에서 배치 처리를 시작했습니다.`
+        : "문서 분리와 OCR 처리 단계가 시작되었습니다.",
+      meta: [
+        batch.processingFileCount != null ? `파일 ${batch.processingFileCount}건` : "",
+        batch.processingCaseCount != null ? `학생 케이스 ${batch.processingCaseCount}건` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  if (batch.processingJobStatusRaw === "RUNNING") {
+    events.push({
+      key: "running",
+      tone: "primary",
+      time: batch.processingJobStartedAt || batch.processingJobCreatedAt || batch.uploadedAt,
+      title: "처리 진행 중",
+      description: "Python 결과 수신 전 단계이며, 배치 상태는 계속 갱신될 예정입니다.",
+      meta: [
+        batch.processingFileCount != null ? `파일 ${batch.processingFileCount}건` : "",
+        batch.processingCaseCount != null ? `학생 케이스 ${batch.processingCaseCount}건` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  if (hasTerminalProcessingStatus(batch.processingJobStatusRaw)) {
+    const isFailure = batch.processingJobStatusRaw === "FAILED";
+    const isPartial = batch.processingJobStatusRaw === "PARTIAL_SUCCESS";
+
+    events.push({
+      key: "finished",
+      tone: isFailure ? "error" : isPartial ? "warning" : "success",
+      time: batch.processingJobFinishedAt || batch.uploadedAt,
+      title: isFailure
+        ? "처리 실패"
+        : isPartial
+          ? "Python 결과 수신 · 보완 필요"
+          : "Python 결과 수신 완료",
+      description: batch.processingErrorMessage || batch.note || "배치 처리가 종료되었습니다.",
+      meta: [
+        batch.processingFileCount != null ? `파일 ${batch.processingFileCount}건` : "",
+        batch.processingCaseCount != null ? `학생 케이스 ${batch.processingCaseCount}건` : "",
+        batch.processingErrorCount != null ? `오류 ${batch.processingErrorCount}건` : "",
+        batch.processingErrorCode ? `코드 ${batch.processingErrorCode}` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  if (batch.previewFiles.length > 0) {
+    events.push({
+      key: "preview",
+      tone: "success",
+      time:
+        batch.processingJobFinishedAt ||
+        batch.processingJobStartedAt ||
+        batch.processingJobCreatedAt ||
+        batch.uploadedAt,
+      title: "배치 미리보기 준비",
+      description: `${batch.previewFiles.length}건의 미리보기 카드가 배치 상세 화면에 연결되었습니다.`,
+      meta: [batch.studentCount != null ? `학생 ${batch.studentCount}명` : ""].filter(
+        Boolean,
+      ),
+    });
+  }
+
+  return events.filter((event) => event.time || event.title);
+}
+
+function normalizeAgencyUploadBatch(batch, fallback = {}) {
+  const mergedBatch = {
+    ...fallback,
+    ...batch,
+  };
+
+  const mergedProcessingJob = mergedBatch.processingJob ?? fallback.processingJob ?? null;
+  const rawUploadBatchStatus =
+    mergedBatch.uploadBatchStatus ??
+    mergedBatch.uploadBatchStatusRaw ??
+    fallback.uploadBatchStatusRaw ??
+    "";
+  const rawProcessingJobStatus =
+    mergedProcessingJob?.status ??
+    mergedBatch.processingJobStatus ??
+    mergedBatch.processingJobStatusRaw ??
+    mergedBatch.jobStatus ??
+    fallback.processingJobStatusRaw ??
+    "";
+  const uploadBatchStatus = normalizeBatchStatusLabel(
+    rawUploadBatchStatus || mergedBatch.status,
+  );
+  const processingJobStatus = normalizeBatchStatusLabel(rawProcessingJobStatus);
+  const processingJobId =
+    mergedProcessingJob?.id ??
+    mergedBatch.processingJobId ??
+    mergedBatch.jobId ??
+    fallback.processingJobId ??
+    "";
+  const processingJobType =
+    mergedProcessingJob?.type ??
+    mergedBatch.processingJobType ??
+    fallback.processingJobType ??
+    "";
+  const processingJobAttemptNo =
+    mergedProcessingJob?.attemptNo ??
+    mergedBatch.processingJobAttemptNo ??
+    fallback.processingJobAttemptNo ??
+    null;
+  const processingProvider =
+    mergedProcessingJob?.provider ??
+    mergedBatch.processingProvider ??
+    fallback.processingProvider ??
+    "";
+  const processingExternalJobId =
+    mergedProcessingJob?.externalJobId ??
+    mergedBatch.processingExternalJobId ??
+    fallback.processingExternalJobId ??
+    "";
+  const processingFileCount =
+    mergedProcessingJob?.fileCount ??
+    mergedBatch.processingFileCount ??
+    fallback.processingFileCount ??
+    null;
+  const processingCaseCount =
+    mergedProcessingJob?.caseCount ??
+    mergedBatch.processingCaseCount ??
+    fallback.processingCaseCount ??
+    null;
+  const processingErrorCount =
+    mergedProcessingJob?.errorCount ??
+    mergedBatch.processingErrorCount ??
+    fallback.processingErrorCount ??
+    null;
+  const processingErrorCode =
+    mergedProcessingJob?.errorCode ??
+    mergedBatch.processingErrorCode ??
+    fallback.processingErrorCode ??
+    "";
+  const processingErrorMessage =
+    mergedProcessingJob?.errorMessage ??
+    mergedBatch.processingErrorMessage ??
+    fallback.processingErrorMessage ??
+    "";
+  const processingJobCreatedAt = formatDisplayDateTime(
+    mergedProcessingJob?.createdAt ??
+      mergedBatch.processingJobCreatedAt ??
+      fallback.processingJobCreatedAt ??
+      "",
+  );
+  const processingJobStartedAt = formatDisplayDateTime(
+    mergedProcessingJob?.startedAt ??
+      mergedBatch.processingJobStartedAt ??
+      fallback.processingJobStartedAt ??
+      "",
+  );
+  const processingJobFinishedAt = formatDisplayDateTime(
+    mergedProcessingJob?.finishedAt ??
+      mergedBatch.processingJobFinishedAt ??
+      fallback.processingJobFinishedAt ??
+      "",
+  );
+  const normalizedProcessingJob =
+    processingJobId || rawProcessingJobStatus
+      ? {
+          id: processingJobId,
+          type: processingJobType,
+          status: rawProcessingJobStatus,
+          attemptNo: processingJobAttemptNo,
+          provider: processingProvider,
+          externalJobId: processingExternalJobId,
+          fileCount: processingFileCount,
+          caseCount: processingCaseCount,
+          errorCount: processingErrorCount,
+          errorCode: processingErrorCode,
+          errorMessage: processingErrorMessage,
+          createdAt: processingJobCreatedAt,
+          startedAt: processingJobStartedAt,
+          finishedAt: processingJobFinishedAt,
+        }
+      : null;
+
+  return {
+    ...mergedBatch,
+    id: mergedBatch.uploadBatchId ?? mergedBatch.id ?? fallback.id ?? "",
+    uploadBatchId:
+      mergedBatch.uploadBatchId ?? mergedBatch.id ?? fallback.uploadBatchId ?? "",
+    processingJobId,
+    fileName:
+      mergedBatch.fileName ??
+      mergedBatch.originalFileName ??
+      mergedBatch.uploadedFileName ??
+      fallback.fileName ??
+      "업로드 ZIP",
+    uploadedAt: formatDisplayDateTime(
+      mergedBatch.uploadedAt ??
+        mergedBatch.createdAt ??
+        mergedBatch.requestedAt ??
+        fallback.uploadedAt ??
+        "-",
+    ),
+    studentCount:
+      mergedBatch.studentCount ??
+      mergedBatch.totalStudentCount ??
+      mergedBatch.studentsCount ??
+      fallback.studentCount ??
+      0,
+    status:
+      uploadBatchStatus || processingJobStatus || fallback.status || "접수 완료",
+    uploadBatchStatus: uploadBatchStatus || fallback.uploadBatchStatus || "",
+    processingJobStatus: processingJobStatus || fallback.processingJobStatus || "",
+    uploadBatchStatusRaw: rawUploadBatchStatus || fallback.uploadBatchStatusRaw || "",
+    processingJobStatusRaw:
+      rawProcessingJobStatus || fallback.processingJobStatusRaw || "",
+    processingJobType: processingJobType || fallback.processingJobType || "",
+    processingJobAttemptNo,
+    processingProvider,
+    processingExternalJobId,
+    processingFileCount,
+    processingCaseCount,
+    processingErrorCount,
+    processingErrorCode,
+    processingErrorMessage,
+    processingJobCreatedAt,
+    processingJobStartedAt,
+    processingJobFinishedAt,
+    processingJob: normalizedProcessingJob,
+    note: buildBatchNote(
+      {
+        ...mergedBatch,
+        uploadBatchStatus: rawUploadBatchStatus || mergedBatch.status,
+        processingJobStatus: rawProcessingJobStatus,
+      },
+      fallback.note,
+    ),
+    previewFiles: Array.isArray(mergedBatch.previewFiles)
+      ? mergedBatch.previewFiles
+      : Array.isArray(fallback.previewFiles)
+        ? fallback.previewFiles
+        : [],
   };
 }
 
@@ -138,6 +607,10 @@ function EmptyState({ title, description }) {
       <p>{description}</p>
     </div>
   );
+}
+
+function LoadingState({ title = "불러오는 중입니다.", description = "잠시만 기다려 주세요." }) {
+  return <EmptyState title={title} description={description} />;
 }
 
 function SectionMeta({ count, helper }) {
@@ -316,6 +789,112 @@ function StudentListPage({ applications, onOpenDetail }) {
       />
 
       <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>처리 타임라인</h2>
+          <p>업로드부터 처리 대기, OCR 실행, 최종 상태까지 현재 위치를 단계별로 보여줍니다.</p>
+        </div>
+
+        <div className="timelineList">
+          {timeline.map((step, index) => (
+            <article
+              key={step.key}
+              className={`timelineStep${
+                step.state === "done"
+                  ? " isDone"
+                  : step.state === "current"
+                    ? " isCurrent"
+                    : " isUpcoming"
+              }`}
+            >
+              <div className="timelineMarker">{index + 1}</div>
+              <div className="timelineContent">
+                <strong>{step.title}</strong>
+                <p>{step.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>작업 요약</h2>
+          <p>현재 배치에 연결된 처리 작업 메타데이터와 처리량 스냅샷입니다.</p>
+        </div>
+
+        <div className="jobMetricGrid">
+          <article className="jobMetricCard">
+            <span>처리 작업</span>
+            <strong>{hasProcessingJob ? batch.processingJobId : "생성 전"}</strong>
+            <p>
+              {batch.processingJobType || "OCR_BATCH"}
+              {batch.processingJobAttemptNo ? ` · 시도 ${batch.processingJobAttemptNo}회` : ""}
+            </p>
+          </article>
+          <article className="jobMetricCard">
+            <span>현재 단계</span>
+            <strong>{batch.processingJobStatus || "대기"}</strong>
+            <p>{batch.processingProvider || "Provider 미지정"}</p>
+          </article>
+          <article className="jobMetricCard">
+            <span>처리량</span>
+            <strong>{processingLoad}</strong>
+            <p>
+              {batch.processingJobStartedAt
+                ? `시작 ${batch.processingJobStartedAt}`
+                : "아직 실행 시작 전"}
+            </p>
+          </article>
+          <article className="jobMetricCard">
+            <span>오류</span>
+            <strong>{errorSummary}</strong>
+            <p>{batch.processingErrorMessage || "추가 오류 메시지 없음"}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>작업 이벤트</h2>
+          <p>현재 저장된 배치/작업 메타데이터를 기반으로 처리 이력을 시간순으로 정리했습니다.</p>
+        </div>
+
+        <div className="eventList">
+          {events.map((event) => (
+            <article
+              key={event.key}
+              className={`eventCard${
+                event.tone === "primary"
+                  ? " isPrimary"
+                  : event.tone === "warning"
+                    ? " isWarning"
+                    : event.tone === "error"
+                      ? " isError"
+                      : event.tone === "success"
+                        ? " isSuccess"
+                        : ""
+              }`}
+            >
+              <div className="eventHeader">
+                <strong>{event.title}</strong>
+                <span>{event.time || "시간 미정"}</span>
+              </div>
+              <p>{event.description}</p>
+              {event.meta.length > 0 ? (
+                <div className="eventMetaRow">
+                  {event.meta.map((meta) => (
+                    <span key={`${event.key}-${meta}`} className="eventPill">
+                      {meta}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="surfaceCard">
         <div className="tableWrap">
           <table className="dataTable stackedTable">
             <thead>
@@ -406,6 +985,112 @@ function StudentDetailPage({ application, onBack }) {
       />
 
       <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>처리 타임라인</h2>
+          <p>업로드부터 처리 대기, OCR 실행, 최종 상태까지 현재 위치를 단계별로 보여줍니다.</p>
+        </div>
+
+        <div className="timelineList">
+          {timeline.map((step, index) => (
+            <article
+              key={step.key}
+              className={`timelineStep${
+                step.state === "done"
+                  ? " isDone"
+                  : step.state === "current"
+                    ? " isCurrent"
+                    : " isUpcoming"
+              }`}
+            >
+              <div className="timelineMarker">{index + 1}</div>
+              <div className="timelineContent">
+                <strong>{step.title}</strong>
+                <p>{step.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>작업 요약</h2>
+          <p>현재 배치에 연결된 처리 작업 메타데이터와 처리량 스냅샷입니다.</p>
+        </div>
+
+        <div className="jobMetricGrid">
+          <article className="jobMetricCard">
+            <span>처리 작업</span>
+            <strong>{hasProcessingJob ? batch.processingJobId : "생성 전"}</strong>
+            <p>
+              {batch.processingJobType || "OCR_BATCH"}
+              {batch.processingJobAttemptNo ? ` · 시도 ${batch.processingJobAttemptNo}회` : ""}
+            </p>
+          </article>
+          <article className="jobMetricCard">
+            <span>현재 단계</span>
+            <strong>{batch.processingJobStatus || "대기"}</strong>
+            <p>{batch.processingProvider || "Provider 미지정"}</p>
+          </article>
+          <article className="jobMetricCard">
+            <span>처리량</span>
+            <strong>{processingLoad}</strong>
+            <p>
+              {batch.processingJobStartedAt
+                ? `시작 ${batch.processingJobStartedAt}`
+                : "아직 실행 시작 전"}
+            </p>
+          </article>
+          <article className="jobMetricCard">
+            <span>오류</span>
+            <strong>{errorSummary}</strong>
+            <p>{batch.processingErrorMessage || "추가 오류 메시지 없음"}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>작업 이벤트</h2>
+          <p>현재 저장된 배치/작업 메타데이터를 기반으로 처리 이력을 시간순으로 정리했습니다.</p>
+        </div>
+
+        <div className="eventList">
+          {events.map((event) => (
+            <article
+              key={event.key}
+              className={`eventCard${
+                event.tone === "primary"
+                  ? " isPrimary"
+                  : event.tone === "warning"
+                    ? " isWarning"
+                    : event.tone === "error"
+                      ? " isError"
+                      : event.tone === "success"
+                        ? " isSuccess"
+                        : ""
+              }`}
+            >
+              <div className="eventHeader">
+                <strong>{event.title}</strong>
+                <span>{event.time || "시간 미정"}</span>
+              </div>
+              <p>{event.description}</p>
+              {event.meta.length > 0 ? (
+                <div className="eventMetaRow">
+                  {event.meta.map((meta) => (
+                    <span key={`${event.key}-${meta}`} className="eventPill">
+                      {meta}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="surfaceCard">
         <div className="tableWrap">
           <table className="dataTable stackedTable">
             <thead>
@@ -439,6 +1124,7 @@ function StudentDetailPage({ application, onBack }) {
 
 function SchoolListPage({
   students,
+  allStudents,
   search,
   searchField,
   statusFilter,
@@ -448,7 +1134,7 @@ function SchoolListPage({
   onStatusFilterChange,
   onVisaFilterChange,
 }) {
-  const visaOptions = [...new Set(schoolStudents.map((student) => student.visaType))];
+  const visaOptions = [...new Set(allStudents.map((student) => student.visaType))];
   const searchLabel =
     SCHOOL_SEARCH_OPTIONS.find((option) => option.value === searchField)?.label ?? "학생명";
 
@@ -854,12 +1540,26 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
   );
 }
 
-function AgencyUploadPage({ onBack, onOpenHistory }) {
+function AgencyUploadPage({
+  onBack,
+  onZipFileSelect,
+  onSubmit,
+  onOpenHistory,
+  onOpenUploadedBatch,
+  uploadFeedback,
+  uploadForm,
+  onUploadFormChange,
+  selectedZipFile,
+}) {
+  const isUploading = uploadFeedback.phase === "uploading";
+  const hasUploadedBatch = Boolean(uploadFeedback.batch?.id);
+  const canSubmit = Boolean(selectedZipFile) && !isUploading;
+
   return (
     <>
       <PageHeader
         title="ZIP 업로드"
-        description="스캔본 ZIP 업로드와 학생 구역 분리 규칙을 관리합니다."
+        description="접수 정보를 입력하고 스캔본 ZIP 파일을 업로드합니다."
         actions={
           <>
             <button type="button" className="secondaryButton" onClick={onOpenHistory}>
@@ -874,17 +1574,212 @@ function AgencyUploadPage({ onBack, onOpenHistory }) {
 
       <section className="surfaceCard">
         <div className="sectionHeading">
-          <h2>업로드 영역</h2>
-          <p>실제 업로드 기능 연결 전까지는 화면 구조와 처리 규칙만 제공합니다.</p>
+          <h2>접수 정보</h2>
+          <p>배치에 적용할 접수 일자, 대학교, 분류를 입력합니다.</p>
         </div>
 
-        <div className="uploadDropzone">
-          <strong>ZIP 파일 업로드 영역</strong>
+        <div className="formGrid">
+          <label className="field">
+            <span>접수일</span>
+            <input
+              type="date"
+              value={uploadForm.receiptDate}
+              onChange={(e) => onUploadFormChange("receiptDate", e.target.value)}
+            />
+          </label>
+
+          <label className="field">
+            <span>대학교 (School ID)</span>
+            <input
+              type="text"
+              value={uploadForm.schoolId}
+              onChange={(e) => onUploadFormChange("schoolId", e.target.value)}
+              placeholder="학교 ID 입력"
+            />
+          </label>
+
+          <label className="field">
+            <span>접수분류</span>
+            <select
+              value={uploadForm.receptionType}
+              onChange={(e) => onUploadFormChange("receptionType", e.target.value)}
+            >
+              <option>일반</option>
+              <option>긴급</option>
+              <option>특별</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>신청TYPE</span>
+            <select
+              value={uploadForm.applicationType}
+              onChange={(e) => onUploadFormChange("applicationType", e.target.value)}
+            >
+              <option>신규</option>
+              <option>연장</option>
+              <option>변경</option>
+              <option>변경및연장</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>기관 정보</h2>
+          <p>소속 대학 구분과 수수료 정보를 입력합니다.</p>
+        </div>
+
+        <div className="formGrid">
+          <label className="field">
+            <span>소속대학</span>
+            <input
+              type="text"
+              value={uploadForm.affiliatedSchool}
+              onChange={(e) => onUploadFormChange("affiliatedSchool", e.target.value)}
+              placeholder="소속 대학교명"
+            />
+          </label>
+
+          <label className="field">
+            <span>분류</span>
+            <select
+              value={uploadForm.schoolDivision}
+              onChange={(e) => onUploadFormChange("schoolDivision", e.target.value)}
+            >
+              <option>학부</option>
+              <option>대학원</option>
+              <option>어학당</option>
+              <option>교환학생</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>매출액 (원)</span>
+            <input
+              type="number"
+              value={uploadForm.revenue}
+              onChange={(e) => onUploadFormChange("revenue", e.target.value)}
+              placeholder="0"
+              min="0"
+            />
+          </label>
+
+          <label className="field">
+            <span>민원수수료 (원)</span>
+            <input
+              type="number"
+              value={uploadForm.civilFee}
+              onChange={(e) => onUploadFormChange("civilFee", e.target.value)}
+              placeholder="0"
+              min="0"
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>ZIP 파일</h2>
           <p>통합신청서를 기준으로 학생 구간을 분리하고, 각 학생 문서를 묶어 OCR 대상으로 전달합니다.</p>
-          <button type="button" className="primaryButton">
-            ZIP 파일 선택
+        </div>
+
+        <div
+          className={`uploadDropzone${isUploading ? " isUploading" : selectedZipFile ? " hasFile" : ""}`}
+        >
+          {selectedZipFile ? (
+            <div className="selectedFileInfo">
+              <strong>{selectedZipFile.name}</strong>
+              <span>{(selectedZipFile.size / 1024 / 1024).toFixed(1)} MB</span>
+            </div>
+          ) : (
+            <>
+              <strong>ZIP 파일 선택</strong>
+              <p>업로드할 스캔본 ZIP 파일을 선택합니다.</p>
+            </>
+          )}
+
+          <label className="filePicker">
+            <span className="secondaryButton">
+              {selectedZipFile ? "다른 파일 선택" : "ZIP 파일 선택"}
+            </span>
+            <input
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              onChange={onZipFileSelect}
+              disabled={isUploading}
+            />
+          </label>
+
+          {!selectedZipFile ? (
+            <span className="uploadHint">허용 형식: `.zip` 한 개씩 업로드.</span>
+          ) : null}
+        </div>
+
+        <div className="uploadActions">
+          <button
+            type="button"
+            className="primaryButton"
+            onClick={onSubmit}
+            disabled={!canSubmit}
+          >
+            {isUploading ? "업로드 중..." : "업로드"}
           </button>
         </div>
+
+        {uploadFeedback.phase !== "idle" ? (
+          <div
+            className={`uploadStatusCard ${
+              uploadFeedback.phase === "success"
+                ? "isSuccess"
+                : uploadFeedback.phase === "error"
+                  ? "isError"
+                  : "isUploading"
+            }`}
+          >
+            <div className="uploadStatusHeader">
+              <strong>
+                {uploadFeedback.phase === "uploading"
+                  ? "업로드 요청 전송 중"
+                  : uploadFeedback.phase === "success"
+                    ? "업로드 접수 완료"
+                    : "업로드 실패"}
+              </strong>
+              {uploadFeedback.fileName ? <span>{uploadFeedback.fileName}</span> : null}
+            </div>
+
+            <p>{uploadFeedback.message}</p>
+
+            {uploadFeedback.phase === "success" && uploadFeedback.batch ? (
+              <div className="uploadStatusMeta">
+                <span>배치 ID {uploadFeedback.batch.id}</span>
+                <span>처리 작업 {uploadFeedback.batch.processingJobId || "-"}</span>
+                <span>상태 {uploadFeedback.batch.status}</span>
+              </div>
+            ) : null}
+
+            {uploadFeedback.phase === "success" ? (
+              <div className="uploadStatusActions">
+                <button
+                  type="button"
+                  className="secondaryButton"
+                  onClick={onOpenHistory}
+                >
+                  업로드 내역 보기
+                </button>
+                <button
+                  type="button"
+                  className="primaryButton"
+                  onClick={onOpenUploadedBatch}
+                  disabled={!hasUploadedBatch}
+                >
+                  생성된 배치 보기
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="surfaceCard">
@@ -900,27 +1795,6 @@ function AgencyUploadPage({ onBack, onOpenHistory }) {
               <div>
                 <strong>{step}</strong>
               </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="surfaceCard">
-        <div className="sectionHeading">
-          <h2>학생 구역 분리 규칙</h2>
-          <p>통합신청서를 기준으로 스캔 묶음을 학생 단위로 나누는 운영 규칙입니다.</p>
-        </div>
-
-        <div className="ruleGrid">
-          {zipRules.map((rule) => (
-            <article key={rule.title} className="ruleCard">
-              <strong>{rule.title}</strong>
-              <p>{rule.description}</p>
-              <ul>
-                {rule.bullets.map((bullet) => (
-                  <li key={bullet}>{bullet}</li>
-                ))}
-              </ul>
             </article>
           ))}
         </div>
@@ -948,50 +1822,71 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack }) {
           helper="배치 상세 보기에서 스캔본 미리보기와 학생 구간 분리 결과를 확인합니다."
         />
 
-        <div className="tableWrap">
-          <table className="dataTable stackedTable">
-            <thead>
-              <tr>
-                <th>배치 ID</th>
-                <th>파일명</th>
-                <th>업로드 시각</th>
-                <th>학생 수</th>
-                <th>상태</th>
-                <th>비고</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {batches.map((batch) => (
-                <tr key={batch.id}>
-                  <td data-label="배치 ID">{batch.id}</td>
-                  <td data-label="파일명">{batch.fileName}</td>
-                  <td data-label="업로드 시각">{batch.uploadedAt}</td>
-                  <td data-label="학생 수">{batch.studentCount}명</td>
-                  <td data-label="상태">
-                    <StatusBadge value={batch.status} />
-                  </td>
-                  <td data-label="비고">{batch.note}</td>
-                  <td data-label="작업" className="tableActionCell">
-                    <button
-                      type="button"
-                      className="tableLinkButton"
-                      onClick={() => onOpenDetail(batch.id)}
-                    >
-                      상세 보기
-                    </button>
-                  </td>
+        {batches.length === 0 ? (
+          <EmptyState
+            title="아직 업로드된 배치가 없습니다."
+            description="ZIP 파일을 업로드하면 생성된 배치가 이 목록에 바로 추가됩니다."
+          />
+        ) : (
+          <div className="tableWrap">
+            <table className="dataTable stackedTable">
+              <thead>
+                <tr>
+                  <th>배치 ID</th>
+                  <th>파일명</th>
+                  <th>업로드 시각</th>
+                  <th>학생 수</th>
+                  <th>상태</th>
+                  <th>비고</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {batches.map((batch) => (
+                  <tr key={batch.id}>
+                    <td data-label="배치 ID">{batch.id}</td>
+                    <td data-label="파일명">{batch.fileName}</td>
+                    <td data-label="업로드 시각">{batch.uploadedAt}</td>
+                    <td data-label="학생 수">
+                      {batch.studentCount == null ? "-" : `${batch.studentCount}명`}
+                    </td>
+                    <td data-label="상태">
+                      <StatusBadge value={batch.status} />
+                    </td>
+                    <td data-label="비고">{batch.note}</td>
+                    <td data-label="작업" className="tableActionCell">
+                      <button
+                        type="button"
+                        className="tableLinkButton"
+                        onClick={() => onOpenDetail(batch.id)}
+                      >
+                        상세 보기
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </>
   );
 }
 
 function AgencyUploadHistoryDetailPage({ batch, onBack }) {
+  const timeline = buildBatchTimeline(batch);
+  const events = buildBatchEvents(batch);
+  const hasProcessingJob = Boolean(batch.processingJobId);
+  const processingLoad =
+    batch.processingFileCount != null || batch.processingCaseCount != null
+      ? `${batch.processingFileCount ?? 0}개 파일 · ${batch.processingCaseCount ?? 0}개 케이스`
+      : "집계 전";
+  const errorSummary =
+    batch.processingErrorCount && batch.processingErrorCount > 0
+      ? `${batch.processingErrorCount}건`
+      : "없음";
+
   return (
     <>
       <PageHeader
@@ -1021,15 +1916,27 @@ function AgencyUploadHistoryDetailPage({ batch, onBack }) {
           },
           {
             label: "학생 수",
-            value: `${batch.studentCount}명`,
-            hint: "분리된 학생 케이스 수",
+            value: batch.studentCount == null ? "집계 전" : `${batch.studentCount}명`,
+            hint: batch.processingJobId
+              ? `처리 작업 ID ${batch.processingJobId}`
+              : "분리된 학생 케이스 수",
             tone: "toneNeutral",
           },
           {
             label: "현재 상태",
             value: batch.status,
-            hint: batch.note,
-            tone: batch.status === "보완" ? "toneWarning" : "toneSuccess",
+            hint:
+              batch.processingJobStatus && batch.note
+                ? `${batch.note} · 작업 ${batch.processingJobStatus}`
+                : batch.processingJobStatus
+                  ? `처리 작업 ${batch.processingJobStatus}`
+                  : batch.note,
+            tone:
+              batch.status === "보완" || batch.status === "부분 완료"
+                ? "toneWarning"
+                : batch.status === "실패" || batch.status === "중단"
+                  ? "toneNeutral"
+                  : "toneSuccess",
           },
         ]}
       />
@@ -1040,33 +1947,40 @@ function AgencyUploadHistoryDetailPage({ batch, onBack }) {
           <p>실제 파일 연결 전까지는 더미 스캔 카드로 업로드 상세 화면 구조를 확인합니다.</p>
         </div>
 
-        <div className="scanGrid">
-          {batch.previewFiles.map((file) => (
-            <article key={file.id} className="scanCard">
-              <div className="scanFrame">
-                <div className="scanPaper">
-                  <span>{file.documentName}</span>
-                  <strong>{file.studentName}</strong>
-                  <div className="scanLines">
-                    <i />
-                    <i />
-                    <i />
-                    <i />
+        {batch.previewFiles.length === 0 ? (
+          <EmptyState
+            title="미리보기 데이터가 아직 없습니다."
+            description="이번 범위에서는 ZIP 업로드 후 배치 접수 상태까지만 연결합니다. 후속 OCR 결과와 스캔 미리보기는 배치 처리 완료 후 이어집니다."
+          />
+        ) : (
+          <div className="scanGrid">
+            {batch.previewFiles.map((file) => (
+              <article key={file.id} className="scanCard">
+                <div className="scanFrame">
+                  <div className="scanPaper">
+                    <span>{file.documentName}</span>
+                    <strong>{file.studentName}</strong>
+                    <div className="scanLines">
+                      <i />
+                      <i />
+                      <i />
+                      <i />
+                    </div>
+                    <small>{file.pageRange}</small>
                   </div>
-                  <small>{file.pageRange}</small>
                 </div>
-              </div>
 
-              <div className="scanMeta">
-                <strong>{file.documentName}</strong>
-                <span>
-                  {file.studentName} · {file.pageRange}
-                </span>
-                <p>{file.note}</p>
-              </div>
-            </article>
-          ))}
-        </div>
+                <div className="scanMeta">
+                  <strong>{file.documentName}</strong>
+                  <span>
+                    {file.studentName} · {file.pageRange}
+                  </span>
+                  <p>{file.note}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </>
   );
@@ -1079,27 +1993,97 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [page, setPage] = useState("login");
   const [error, setError] = useState("");
-  const [studentApplicationId, setStudentApplicationId] = useState(
-    studentApplications[0].id,
-  );
+  const [runtimeError, setRuntimeError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [studentApplications, setStudentApplications] = useState([]);
+  const [schoolStudents, setSchoolStudents] = useState([]);
+  const [agencyApplications, setAgencyApplications] = useState([]);
+  const [agencyApplicationDetail, setAgencyApplicationDetail] = useState(null);
+  const [agencyUploadBatches, setAgencyUploadBatches] = useState([]);
+  const [agencyUploadBatchDetail, setAgencyUploadBatchDetail] = useState(null);
+  const [studentApplicationId, setStudentApplicationId] = useState(null);
   const [schoolSearch, setSchoolSearch] = useState("");
   const [schoolSearchField, setSchoolSearchField] = useState("name");
-  const [schoolStatusFilter, setSchoolStatusFilter] = useState("전체");
-  const [schoolVisaFilter, setSchoolVisaFilter] = useState("전체");
+  const [schoolStatusFilter, setSchoolStatusFilter] = useState(ALL_FILTER);
+  const [schoolVisaFilter, setSchoolVisaFilter] = useState(ALL_FILTER);
   const [agencySearch, setAgencySearch] = useState("");
   const [agencySearchField, setAgencySearchField] = useState("studentName");
-  const [agencyStatusFilter, setAgencyStatusFilter] = useState("전체");
-  const [agencyApplicationId, setAgencyApplicationId] = useState(
-    agencyApplications[0].id,
-  );
-  const [agencyPreviewId, setAgencyPreviewId] = useState(
-    agencyApplications[0].documents[0].code,
-  );
-  const [agencyBatchId, setAgencyBatchId] = useState(agencyUploadBatches[0].id);
+  const [agencyStatusFilter, setAgencyStatusFilter] = useState(ALL_FILTER);
+  const [agencyApplicationId, setAgencyApplicationId] = useState(null);
+  const [agencyPreviewId, setAgencyPreviewId] = useState(null);
+  const [agencyBatchId, setAgencyBatchId] = useState(null);
+  const [uploadFeedback, setUploadFeedback] = useState(EMPTY_UPLOAD_FEEDBACK);
+  const [uploadForm, setUploadForm] = useState(EMPTY_UPLOAD_FORM);
+  const [selectedZipFile, setSelectedZipFile] = useState(null);
+
+  const BATCH_TERMINAL_STATUSES = new Set([
+    "COMPLETED",
+    "RESULT_UPLOADED",
+    "NEEDS_REVIEW",
+    "FAILED",
+    "CANCELED",
+    "CANCELLED",
+  ]);
+
+  const pollingBatchIdRef = useRef(null);
+
+  useEffect(() => {
+    if (!agencyBatchId || !session?.username || !session?.password) {
+      return;
+    }
+
+    const currentBatch =
+      agencyUploadBatchDetail ??
+      agencyUploadBatches.find((batch) => batch.id === agencyBatchId) ??
+      null;
+
+    const rawStatus = currentBatch?.uploadBatchStatusRaw ?? "";
+    if (rawStatus && BATCH_TERMINAL_STATUSES.has(rawStatus.toUpperCase())) {
+      return;
+    }
+
+    pollingBatchIdRef.current = agencyBatchId;
+
+    const intervalId = setInterval(async () => {
+      if (pollingBatchIdRef.current !== agencyBatchId) {
+        clearInterval(intervalId);
+        return;
+      }
+
+      try {
+        const detail = await fetchAgencyUploadBatchDetail(
+          session.username,
+          session.password,
+          agencyBatchId,
+        );
+        const fallback =
+          agencyUploadBatchDetail?.id === agencyBatchId ? agencyUploadBatchDetail : null;
+        const normalizedDetail = normalizeAgencyUploadBatch(detail, fallback ?? {});
+
+        setAgencyUploadBatchDetail((current) =>
+          current?.id === agencyBatchId ? normalizedDetail : current,
+        );
+        upsertAgencyUploadBatch(normalizedDetail);
+
+        const updatedRawStatus = normalizedDetail.uploadBatchStatusRaw ?? "";
+        if (updatedRawStatus && BATCH_TERMINAL_STATUSES.has(updatedRawStatus.toUpperCase())) {
+          clearInterval(intervalId);
+        }
+      } catch {
+        // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agencyBatchId, session]);
 
   const selectedStudentApplication =
     studentApplications.find((application) => application.id === studentApplicationId) ??
-    studentApplications[0];
+    studentApplications[0] ??
+    null;
 
   const filteredSchoolStudents = useMemo(() => {
     const query = schoolSearch.trim().toLowerCase();
@@ -1111,13 +2095,13 @@ export default function App() {
           .toLowerCase()
           .includes(query);
       const matchesStatus =
-        schoolStatusFilter === "전체" || student.status === schoolStatusFilter;
+        schoolStatusFilter === ALL_FILTER || student.status === schoolStatusFilter;
       const matchesVisa =
-        schoolVisaFilter === "전체" || student.visaType === schoolVisaFilter;
+        schoolVisaFilter === ALL_FILTER || student.visaType === schoolVisaFilter;
 
       return matchesSearch && matchesStatus && matchesVisa;
     });
-  }, [schoolSearch, schoolSearchField, schoolStatusFilter, schoolVisaFilter]);
+  }, [schoolStudents, schoolSearch, schoolSearchField, schoolStatusFilter, schoolVisaFilter]);
 
   const filteredAgencyApplications = useMemo(() => {
     const query = agencySearch.trim().toLowerCase();
@@ -1129,24 +2113,25 @@ export default function App() {
           .toLowerCase()
           .includes(query);
       const matchesStatus =
-        agencyStatusFilter === "전체" || application.status === agencyStatusFilter;
+        agencyStatusFilter === ALL_FILTER || application.status === agencyStatusFilter;
 
       return matchesSearch && matchesStatus;
     });
-  }, [agencySearch, agencySearchField, agencyStatusFilter]);
+  }, [agencyApplications, agencySearch, agencySearchField, agencyStatusFilter]);
 
-  const selectedAgencyApplication =
-    agencyApplications.find((application) => application.id === agencyApplicationId) ??
-    agencyApplications[0];
-
+  const selectedAgencyApplication = agencyApplicationDetail;
   const selectedAgencyDocument =
-    selectedAgencyApplication.documents.find(
+    selectedAgencyApplication?.documents.find(
       (document) => document.code === agencyPreviewId,
-    ) ?? selectedAgencyApplication.documents[0];
+    ) ??
+    selectedAgencyApplication?.documents[0] ??
+    null;
 
   const selectedAgencyBatch =
+    agencyUploadBatchDetail ??
     agencyUploadBatches.find((batch) => batch.id === agencyBatchId) ??
-    agencyUploadBatches[0];
+    agencyUploadBatches[0] ??
+    null;
 
   function handleStudentFieldChange(field, value) {
     setStudentForm((current) => ({
@@ -1165,9 +2150,182 @@ export default function App() {
     }));
   }
 
-  function handleLogin(event) {
+  function resetRoleData() {
+    setStudentApplications([]);
+    setSchoolStudents([]);
+    setAgencyApplications([]);
+    setAgencyApplicationDetail(null);
+    setAgencyUploadBatches([]);
+    setAgencyUploadBatchDetail(null);
+    setStudentApplicationId(null);
+    setAgencyApplicationId(null);
+    setAgencyPreviewId(null);
+    setAgencyBatchId(null);
+    setUploadFeedback(EMPTY_UPLOAD_FEEDBACK);
+    setUploadForm({ ...EMPTY_UPLOAD_FORM, receiptDate: new Date().toISOString().split("T")[0] });
+    setSelectedZipFile(null);
+  }
+
+  function upsertAgencyUploadBatch(batch) {
+    setAgencyUploadBatches((current) => {
+      const nextBatch = normalizeAgencyUploadBatch(batch);
+
+      return [
+        nextBatch,
+        ...current.filter((currentBatch) => currentBatch.id !== nextBatch.id),
+      ];
+    });
+  }
+
+  async function openAgencyApplicationDetail(applicationId, nextSession = session) {
+    if (!nextSession?.username || !nextSession?.password) {
+      return;
+    }
+
+    setIsLoading(true);
+    setRuntimeError("");
+
+    try {
+      const detail = await fetchAgencyApplicationDetail(
+        nextSession.username,
+        nextSession.password,
+        applicationId,
+      );
+
+      setAgencyApplicationId(applicationId);
+      setAgencyApplicationDetail(detail);
+      setAgencyPreviewId(detail.documents[0]?.code ?? null);
+      setPage("agency-detail");
+    } catch (exception) {
+      setRuntimeError(exception.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function openAgencyUploadBatchDetail(batchId, nextSession = session) {
+    if (!nextSession?.username || !nextSession?.password) {
+      return;
+    }
+
+    setIsLoading(true);
+    setRuntimeError("");
+
+    try {
+      const currentBatch =
+        agencyUploadBatches.find((batch) => batch.id === batchId) ??
+        (uploadFeedback.batch?.id === batchId ? uploadFeedback.batch : null);
+      const detail = await fetchAgencyUploadBatchDetail(
+        nextSession.username,
+        nextSession.password,
+        batchId,
+      );
+      const normalizedDetail = normalizeAgencyUploadBatch(detail, currentBatch);
+
+      setAgencyBatchId(batchId);
+      setAgencyUploadBatchDetail(normalizedDetail);
+      upsertAgencyUploadBatch(normalizedDetail);
+      setPage("agency-upload-history-detail");
+    } catch (exception) {
+      setRuntimeError(exception.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function handleUploadFormChange(field, value) {
+    setUploadForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleZipFileSelect(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      setUploadFeedback({
+        phase: "error",
+        fileName: file.name,
+        message: "ZIP 파일만 업로드할 수 있습니다.",
+        batch: null,
+      });
+      return;
+    }
+
+    setSelectedZipFile(file);
+    setUploadFeedback(EMPTY_UPLOAD_FEEDBACK);
+  }
+
+  function buildUploadNote(form) {
+    const parts = [
+      form.receiptDate && `접수일: ${form.receiptDate}`,
+      form.receptionType && `접수분류: ${form.receptionType}`,
+      form.applicationType && `신청TYPE: ${form.applicationType}`,
+      form.affiliatedSchool && `소속대학: ${form.affiliatedSchool}`,
+      form.schoolDivision && `과정구분: ${form.schoolDivision}`,
+      form.revenue && `매출액: ${Number(form.revenue).toLocaleString()}원`,
+      form.civilFee && `민원수수료: ${Number(form.civilFee).toLocaleString()}원`,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(" | ") : null;
+  }
+
+  async function handleAgencyUploadSubmit() {
+    if (!selectedZipFile) return;
+
+    if (!session?.username || !session?.password) {
+      setUploadFeedback({
+        phase: "error",
+        fileName: selectedZipFile.name,
+        message: "유학원 계정 인증 정보가 없습니다. 다시 로그인해 주세요.",
+        batch: null,
+      });
+      return;
+    }
+
+    const schoolId = uploadForm.schoolId.trim() || undefined;
+    const note = buildUploadNote(uploadForm) || undefined;
+
+    setRuntimeError("");
+    setUploadFeedback({
+      phase: "uploading",
+      fileName: selectedZipFile.name,
+      message: "ZIP 파일을 업로드하고 배치를 생성하고 있습니다.",
+      batch: null,
+    });
+
+    try {
+      const createdBatch = normalizeAgencyUploadBatch(
+        await uploadAgencyBatchFile(session.username, session.password, selectedZipFile, {
+          schoolId,
+          note,
+        }),
+        { fileName: selectedZipFile.name },
+      );
+
+      upsertAgencyUploadBatch(createdBatch);
+      setAgencyBatchId(createdBatch.id);
+      setAgencyUploadBatchDetail(createdBatch);
+      setSelectedZipFile(null);
+      setUploadFeedback({
+        phase: "success",
+        fileName: createdBatch.fileName || selectedZipFile.name,
+        message: "업로드가 접수되었습니다. 생성된 배치를 업로드 이력에서 바로 확인할 수 있습니다.",
+        batch: createdBatch,
+      });
+    } catch (exception) {
+      setUploadFeedback({
+        phase: "error",
+        fileName: selectedZipFile.name,
+        message: exception.message,
+        batch: null,
+      });
+    }
+  }
+
+  async function handleLogin(event) {
     event.preventDefault();
     setError("");
+    setRuntimeError("");
 
     if (loginType === "student") {
       const hasEmptyField = Object.values(studentForm).some((value) => !value);
@@ -1175,30 +2333,75 @@ export default function App() {
         setError("학생 로그인 정보 3가지를 모두 입력해 주세요.");
         return;
       }
-
-      setSession(buildSession("student", studentForm));
-      setPage("student-list");
-      return;
     }
 
-    const currentForm = orgForms[loginType];
-    if (!currentForm.username || !currentForm.password) {
-      setError(`${ROLE_LABELS[loginType]} 로그인 정보를 입력해 주세요.`);
-      return;
-    }
+    setIsLoading(true);
 
-    setSession(buildSession(loginType, currentForm));
-    setPage(loginType === "school" ? "school-list" : "agency-dashboard");
+    try {
+      resetRoleData();
+
+      if (loginType === "student") {
+        const result = await lookupStudentAccess(studentForm);
+
+        setStudentApplications(result.applications);
+        setStudentApplicationId(result.applications[0]?.id ?? null);
+        setSession(buildSession("student", result.student));
+        setPage("student-list");
+        return;
+      }
+
+      const currentForm = orgForms[loginType];
+      if (!currentForm.username || !currentForm.password) {
+        setError(`${ROLE_LABELS[loginType]} 로그인 정보를 입력해 주세요.`);
+        return;
+      }
+
+      await fetchMe(currentForm.username, currentForm.password);
+
+      const nextSession = buildSession(loginType, currentForm);
+      setSession(nextSession);
+
+      if (loginType === "school") {
+        const rows = await fetchSchoolStudents(currentForm.username, currentForm.password);
+        setSchoolStudents(rows);
+        setPage("school-list");
+        return;
+      }
+
+      const [cases, batches] = await Promise.all([
+        fetchAgencyApplications(currentForm.username, currentForm.password),
+        fetchAgencyUploadBatches(currentForm.username, currentForm.password),
+      ]);
+      const normalizedBatches = Array.isArray(batches)
+        ? batches.map((batch) => normalizeAgencyUploadBatch(batch))
+        : [];
+
+      setAgencyApplications(cases);
+      setAgencyApplicationId(cases[0]?.id ?? null);
+      setAgencyUploadBatches(normalizedBatches);
+      setAgencyBatchId(normalizedBatches[0]?.id ?? null);
+      setPage("agency-dashboard");
+    } catch (exception) {
+      setError(exception.message);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function handleLogout() {
+    resetRoleData();
     setSession(null);
     setPage("login");
     setError("");
+    setRuntimeError("");
   }
 
   function renderPage() {
     if (page === "student-list") {
+      if (isLoading && studentApplications.length === 0) {
+        return <LoadingState />;
+      }
+
       return (
         <StudentListPage
           applications={studentApplications}
@@ -1211,6 +2414,14 @@ export default function App() {
     }
 
     if (page === "student-detail") {
+      if (!selectedStudentApplication) {
+        return (
+          <section className="surfaceCard">
+            <LoadingState title="신청 건이 없습니다." description="학생 신청 데이터를 다시 확인해 주세요." />
+          </section>
+        );
+      }
+
       return (
         <StudentDetailPage
           application={selectedStudentApplication}
@@ -1223,6 +2434,7 @@ export default function App() {
       return (
         <SchoolListPage
           students={filteredSchoolStudents}
+          allStudents={schoolStudents}
           search={schoolSearch}
           searchField={schoolSearchField}
           statusFilter={schoolStatusFilter}
@@ -1245,21 +2457,25 @@ export default function App() {
           onSearchChange={setAgencySearch}
           onSearchFieldChange={setAgencySearchField}
           onStatusFilterChange={setAgencyStatusFilter}
-          onOpenDetail={(applicationId) => {
-            const nextApplication =
-              agencyApplications.find((application) => application.id === applicationId) ??
-              agencyApplications[0];
-
-            setAgencyApplicationId(applicationId);
-            setAgencyPreviewId(nextApplication.documents[0].code);
-            setPage("agency-detail");
-          }}
+          onOpenDetail={openAgencyApplicationDetail}
           onOpenUpload={() => setPage("agency-upload")}
         />
       );
     }
 
     if (page === "agency-detail") {
+      if (isLoading && !selectedAgencyApplication) {
+        return <LoadingState />;
+      }
+
+      if (!selectedAgencyApplication || !selectedAgencyDocument) {
+        return (
+          <section className="surfaceCard">
+            <LoadingState title="상세 데이터를 불러오지 못했습니다." description="대시보드에서 다시 선택해 주세요." />
+          </section>
+        );
+      }
+
       return (
         <AgencyDetailPage
           application={selectedAgencyApplication}
@@ -1274,7 +2490,22 @@ export default function App() {
       return (
         <AgencyUploadPage
           onBack={() => setPage("agency-dashboard")}
+          onZipFileSelect={handleZipFileSelect}
+          onSubmit={handleAgencyUploadSubmit}
           onOpenHistory={() => setPage("agency-upload-history")}
+          onOpenUploadedBatch={() => {
+            if (!uploadFeedback.batch?.id) {
+              return;
+            }
+
+            setAgencyBatchId(uploadFeedback.batch.id);
+            setAgencyUploadBatchDetail(uploadFeedback.batch);
+            setPage("agency-upload-history-detail");
+          }}
+          uploadFeedback={uploadFeedback}
+          uploadForm={uploadForm}
+          onUploadFormChange={handleUploadFormChange}
+          selectedZipFile={selectedZipFile}
         />
       );
     }
@@ -1283,12 +2514,21 @@ export default function App() {
       return (
         <AgencyUploadHistoryPage
           batches={agencyUploadBatches}
-          onOpenDetail={(batchId) => {
-            setAgencyBatchId(batchId);
-            setPage("agency-upload-history-detail");
-          }}
+          onOpenDetail={openAgencyUploadBatchDetail}
           onBack={() => setPage("agency-upload")}
         />
+      );
+    }
+
+    if (isLoading && !selectedAgencyBatch) {
+      return <LoadingState />;
+    }
+
+    if (!selectedAgencyBatch) {
+      return (
+        <section className="surfaceCard">
+          <LoadingState title="업로드 배치가 없습니다." description="업로드 이력 데이터를 다시 확인해 주세요." />
+        </section>
       );
     }
 
@@ -1313,7 +2553,7 @@ export default function App() {
         onStudentFieldChange={handleStudentFieldChange}
         onOrgFieldChange={handleOrgFieldChange}
         onSubmit={handleLogin}
-        error={error}
+        error={isLoading ? "로그인 정보를 확인하는 중입니다." : error}
       />
     );
   }
@@ -1325,6 +2565,7 @@ export default function App() {
       onNavigate={setPage}
       onLogout={handleLogout}
     >
+      {runtimeError ? <div className="errorBox">{runtimeError}</div> : null}
       {renderPage()}
     </AppShell>
   );
