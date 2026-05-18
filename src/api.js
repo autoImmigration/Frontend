@@ -129,6 +129,14 @@ export async function fetchAgencyUploadBatches(username, password) {
   });
 }
 
+export async function fetchOcrProgress(username, password, batchId) {
+  return request(`/agency/upload-batches/${batchId}/ocr-progress`, {
+    username,
+    password,
+    fallbackMessage: "Failed to load OCR progress",
+  });
+}
+
 export async function fetchAgencyUploadBatchDetail(username, password, batchId) {
   return request(`/agency/upload-batches/${batchId}`, {
     username,
@@ -137,11 +145,20 @@ export async function fetchAgencyUploadBatchDetail(username, password, batchId) 
   });
 }
 
-export async function uploadAgencyBatchFile(username, password, file, { schoolId, note } = {}) {
+export async function fetchSchools(username, password) {
+  return request("/agency/schools", {
+    username,
+    password,
+    fallbackMessage: "Failed to load schools",
+  });
+}
+
+export async function uploadAgencyBatchFile(username, password, file, { schoolId, note, visaTypeCode } = {}) {
   const formData = new FormData();
   formData.append("file", file);
   if (schoolId) formData.append("schoolId", schoolId);
   if (note) formData.append("note", note);
+  if (visaTypeCode) formData.append("visaTypeCode", visaTypeCode);
 
   return request("/agency/upload-batches/file", {
     method: "POST",

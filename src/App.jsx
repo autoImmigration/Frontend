@@ -11,7 +11,9 @@ import {
   fetchAgencyUploadBatchDetail,
   fetchAgencyUploadBatches,
   fetchMe,
+  fetchOcrProgress,
   fetchSchoolStudents,
+  fetchSchools,
   lookupStudentAccess,
   uploadAgencyBatchFile,
 } from "./api.js";
@@ -81,15 +83,18 @@ const EMPTY_UPLOAD_FEEDBACK = {
   batch: null,
 };
 
+const VISA_TYPE_OPTIONS = [
+  { code: "ALIEN_REGISTRATION", label: "외국인등록" },
+  { code: "D2_EXTENSION", label: "D2연장" },
+  { code: "D4_EXTENSION", label: "D4연장" },
+  { code: "STATUS_CHANGE_AND_EXTENSION", label: "세부체류자격 변경 및 연장" },
+  { code: "D2_CHANGE", label: "D2변경" },
+];
+
 const EMPTY_UPLOAD_FORM = {
   receiptDate: new Date().toISOString().split("T")[0],
   schoolId: "",
-  receptionType: "일반",
-  applicationType: "신규",
-  affiliatedSchool: "",
-  schoolDivision: "학부",
-  revenue: "",
-  civilFee: "",
+  visaTypeCode: "",
 };
 
 const BATCH_STATUS_LABELS = {
@@ -560,6 +565,11 @@ function normalizeAgencyUploadBatch(batch, fallback = {}) {
       ? mergedBatch.previewFiles
       : Array.isArray(fallback.previewFiles)
         ? fallback.previewFiles
+        : [],
+    cases: Array.isArray(mergedBatch.cases)
+      ? mergedBatch.cases
+      : Array.isArray(fallback.cases)
+        ? fallback.cases
         : [],
   };
 }
@@ -1550,10 +1560,13 @@ function AgencyUploadPage({
   uploadForm,
   onUploadFormChange,
   selectedZipFile,
+  schools,
 }) {
   const isUploading = uploadFeedback.phase === "uploading";
   const hasUploadedBatch = Boolean(uploadFeedback.batch?.id);
-  const canSubmit = Boolean(selectedZipFile) && !isUploading;
+  const missingSchool = !uploadForm.schoolId;
+  const missingVisaType = !uploadForm.visaTypeCode;
+  const canSubmit = Boolean(selectedZipFile) && !isUploading && !missingSchool && !missingVisaType;
 
   return (
     <>
@@ -1589,92 +1602,31 @@ function AgencyUploadPage({
           </label>
 
           <label className="field">
-            <span>대학교 (School ID)</span>
-            <input
-              type="text"
+            <span>대학교 <span style={{ color: "var(--color-error, #dc2626)" }}>*</span></span>
+            <select
               value={uploadForm.schoolId}
               onChange={(e) => onUploadFormChange("schoolId", e.target.value)}
-              placeholder="학교 ID 입력"
-            />
-          </label>
-
-          <label className="field">
-            <span>접수분류</span>
-            <select
-              value={uploadForm.receptionType}
-              onChange={(e) => onUploadFormChange("receptionType", e.target.value)}
+              style={missingSchool ? { borderColor: "var(--color-error, #dc2626)" } : undefined}
             >
-              <option>일반</option>
-              <option>긴급</option>
-              <option>특별</option>
+              <option value="">학교 선택 (필수)</option>
+              {schools.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
             </select>
           </label>
 
           <label className="field">
-            <span>신청TYPE</span>
+            <span>신청 타입 <span style={{ color: "var(--color-error, #dc2626)" }}>*</span></span>
             <select
-              value={uploadForm.applicationType}
-              onChange={(e) => onUploadFormChange("applicationType", e.target.value)}
+              value={uploadForm.visaTypeCode}
+              onChange={(e) => onUploadFormChange("visaTypeCode", e.target.value)}
+              style={missingVisaType ? { borderColor: "var(--color-error, #dc2626)" } : undefined}
             >
-              <option>신규</option>
-              <option>연장</option>
-              <option>변경</option>
-              <option>변경및연장</option>
+              <option value="">신청 타입 선택 (필수)</option>
+              {VISA_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.code} value={opt.code}>{opt.label}</option>
+              ))}
             </select>
-          </label>
-        </div>
-      </section>
-
-      <section className="surfaceCard">
-        <div className="sectionHeading">
-          <h2>기관 정보</h2>
-          <p>소속 대학 구분과 수수료 정보를 입력합니다.</p>
-        </div>
-
-        <div className="formGrid">
-          <label className="field">
-            <span>소속대학</span>
-            <input
-              type="text"
-              value={uploadForm.affiliatedSchool}
-              onChange={(e) => onUploadFormChange("affiliatedSchool", e.target.value)}
-              placeholder="소속 대학교명"
-            />
-          </label>
-
-          <label className="field">
-            <span>분류</span>
-            <select
-              value={uploadForm.schoolDivision}
-              onChange={(e) => onUploadFormChange("schoolDivision", e.target.value)}
-            >
-              <option>학부</option>
-              <option>대학원</option>
-              <option>어학당</option>
-              <option>교환학생</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>매출액 (원)</span>
-            <input
-              type="number"
-              value={uploadForm.revenue}
-              onChange={(e) => onUploadFormChange("revenue", e.target.value)}
-              placeholder="0"
-              min="0"
-            />
-          </label>
-
-          <label className="field">
-            <span>민원수수료 (원)</span>
-            <input
-              type="number"
-              value={uploadForm.civilFee}
-              onChange={(e) => onUploadFormChange("civilFee", e.target.value)}
-              placeholder="0"
-              min="0"
-            />
           </label>
         </div>
       </section>
@@ -1726,6 +1678,15 @@ function AgencyUploadPage({
           >
             {isUploading ? "업로드 중..." : "업로드"}
           </button>
+          {selectedZipFile && (missingSchool || missingVisaType) && (
+            <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: "var(--color-error, #dc2626)" }}>
+              {missingSchool && missingVisaType
+                ? "대학교와 신청 타입을 선택해야 업로드할 수 있습니다."
+                : missingSchool
+                  ? "대학교를 선택해야 업로드할 수 있습니다."
+                  : "신청 타입을 선택해야 업로드할 수 있습니다."}
+            </p>
+          )}
         </div>
 
         {uploadFeedback.phase !== "idle" ? (
@@ -1874,7 +1835,7 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack }) {
   );
 }
 
-function AgencyUploadHistoryDetailPage({ batch, onBack }) {
+function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress }) {
   const timeline = buildBatchTimeline(batch);
   const events = buildBatchEvents(batch);
   const hasProcessingJob = Boolean(batch.processingJobId);
@@ -1886,6 +1847,11 @@ function AgencyUploadHistoryDetailPage({ batch, onBack }) {
     batch.processingErrorCount && batch.processingErrorCount > 0
       ? `${batch.processingErrorCount}건`
       : "없음";
+  const isRunning = batch.processingJobStatusRaw === "RUNNING" || batch.processingJobStatus === "처리 중";
+  const isTerminal = hasTerminalProcessingStatus(batch.processingJobStatusRaw) || hasTerminalBatchStatus(batch.uploadBatchStatusRaw);
+  const progressTotal = ocrProgress?.total || batch.processingFileCount || 0;
+  const progressDone = ocrProgress?.processed || 0;
+  const progressPct = progressTotal > 0 ? Math.round((progressDone / progressTotal) * 100) : 0;
 
   return (
     <>
@@ -1941,16 +1907,114 @@ function AgencyUploadHistoryDetailPage({ batch, onBack }) {
         ]}
       />
 
+      {isRunning && (
+        <section className="surfaceCard">
+          <div className="sectionHeading">
+            <h2>OCR 처리 중</h2>
+            <p>Azure Document Intelligence로 서류를 분석하고 있습니다.</p>
+          </div>
+          <div style={{ padding: "8px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "0.875rem" }}>
+              <span>{progressTotal > 0 ? `${progressDone} / ${progressTotal}개 파일 처리됨` : `${batch.processingFileCount || 0}개 파일 분석 대기 중`}</span>
+              {progressTotal > 0 && <span>{progressPct}%</span>}
+            </div>
+            <div style={{ height: "8px", background: "var(--color-surface-2, #e5e7eb)", borderRadius: "4px", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  borderRadius: "4px",
+                  background: "var(--color-primary, #2563eb)",
+                  width: progressTotal > 0 ? `${progressPct}%` : "100%",
+                  transition: "width 0.5s ease",
+                  animation: progressTotal === 0 ? "pulse 1.5s ease-in-out infinite" : "none",
+                }}
+              />
+            </div>
+            {progressTotal === 0 && (
+              <p style={{ marginTop: "8px", fontSize: "0.8rem", color: "var(--color-text-muted, #6b7280)" }}>
+                진행 정보를 가져오는 중입니다. 3초마다 자동 갱신됩니다.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {isTerminal && (!batch.cases || batch.cases.length === 0) && (
+        <section className="surfaceCard">
+          <div className="sectionHeading">
+            <h2>학생별 접수 결과</h2>
+            <p>OCR 처리가 완료되었습니다.</p>
+          </div>
+          <EmptyState
+            title="학생 케이스가 생성되지 않았습니다."
+            description="업로드 시 대학교와 신청 타입이 선택되어 있어야 케이스가 자동 생성됩니다. 해당 배치를 다시 올리거나, 새 ZIP 업로드 시 대학교와 신청 타입을 반드시 선택해 주세요."
+          />
+        </section>
+      )}
+
+      {batch.cases && batch.cases.length > 0 && (
+        <section className="surfaceCard">
+          <div className="sectionHeading">
+            <h2>학생별 접수 결과</h2>
+            <p>OCR 분석 결과 — 총 {batch.cases.length}명 · 각 학생의 제출 서류 현황을 확인합니다.</p>
+          </div>
+          <table className="dataTable">
+            <thead>
+              <tr>
+                <th>학생명</th>
+                <th>국적</th>
+                <th>신청 타입</th>
+                <th>제출</th>
+                <th>누락</th>
+                <th>서류 현황</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batch.cases.map((c) => (
+                <tr key={c.id}>
+                  <td data-label="학생명">{c.studentName}</td>
+                  <td data-label="국적">{c.nationality}</td>
+                  <td data-label="신청 타입">{c.applicationType}</td>
+                  <td data-label="제출">{c.submittedCount}건</td>
+                  <td data-label="누락" style={{ color: c.missingCount > 0 ? "var(--color-warning, #d97706)" : "inherit" }}>
+                    {c.missingCount > 0 ? `${c.missingCount}건 누락` : "완비"}
+                  </td>
+                  <td data-label="서류 현황">
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                      {c.documents.map((doc) => (
+                        <span
+                          key={doc.code}
+                          title={doc.rule}
+                          style={{
+                            padding: "2px 6px",
+                            borderRadius: "4px",
+                            fontSize: "0.75rem",
+                            background: doc.status === "제출" ? "var(--color-success-soft, #d1fae5)" : "var(--color-warning-soft, #fef3c7)",
+                            color: doc.status === "제출" ? "var(--color-success, #065f46)" : "var(--color-warning, #92400e)",
+                          }}
+                        >
+                          {doc.name}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section className="surfaceCard">
         <div className="sectionHeading">
           <h2>스캔본 미리보기</h2>
-          <p>실제 파일 연결 전까지는 더미 스캔 카드로 업로드 상세 화면 구조를 확인합니다.</p>
+          <p>OCR 처리 중 분류된 파일 목록입니다.</p>
         </div>
 
         {batch.previewFiles.length === 0 ? (
           <EmptyState
             title="미리보기 데이터가 아직 없습니다."
-            description="이번 범위에서는 ZIP 업로드 후 배치 접수 상태까지만 연결합니다. 후속 OCR 결과와 스캔 미리보기는 배치 처리 완료 후 이어집니다."
+            description="OCR 결과와 스캔 미리보기는 배치 처리 완료 후 표시됩니다."
           />
         ) : (
           <div className="scanGrid">
@@ -2015,6 +2079,17 @@ export default function App() {
   const [uploadFeedback, setUploadFeedback] = useState(EMPTY_UPLOAD_FEEDBACK);
   const [uploadForm, setUploadForm] = useState(EMPTY_UPLOAD_FORM);
   const [selectedZipFile, setSelectedZipFile] = useState(null);
+  const [schools, setSchools] = useState([]);
+  const [ocrProgress, setOcrProgress] = useState(null);
+
+  useEffect(() => {
+    if (!session?.username || !session?.password) {
+      return;
+    }
+    fetchSchools(session.username, session.password)
+      .then(setSchools)
+      .catch(() => {});
+  }, [session?.username, session?.password]);
 
   const BATCH_TERMINAL_STATUSES = new Set([
     "COMPLETED",
@@ -2051,11 +2126,10 @@ export default function App() {
       }
 
       try {
-        const detail = await fetchAgencyUploadBatchDetail(
-          session.username,
-          session.password,
-          agencyBatchId,
-        );
+        const [detail, progress] = await Promise.all([
+          fetchAgencyUploadBatchDetail(session.username, session.password, agencyBatchId),
+          fetchOcrProgress(session.username, session.password, agencyBatchId).catch(() => null),
+        ]);
         const fallback =
           agencyUploadBatchDetail?.id === agencyBatchId ? agencyUploadBatchDetail : null;
         const normalizedDetail = normalizeAgencyUploadBatch(detail, fallback ?? {});
@@ -2064,10 +2138,12 @@ export default function App() {
           current?.id === agencyBatchId ? normalizedDetail : current,
         );
         upsertAgencyUploadBatch(normalizedDetail);
+        if (progress) setOcrProgress(progress);
 
         const updatedRawStatus = normalizedDetail.uploadBatchStatusRaw ?? "";
         if (updatedRawStatus && BATCH_TERMINAL_STATUSES.has(updatedRawStatus.toUpperCase())) {
           clearInterval(intervalId);
+          setOcrProgress(null);
         }
       } catch {
         // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
@@ -2259,12 +2335,6 @@ export default function App() {
   function buildUploadNote(form) {
     const parts = [
       form.receiptDate && `접수일: ${form.receiptDate}`,
-      form.receptionType && `접수분류: ${form.receptionType}`,
-      form.applicationType && `신청TYPE: ${form.applicationType}`,
-      form.affiliatedSchool && `소속대학: ${form.affiliatedSchool}`,
-      form.schoolDivision && `과정구분: ${form.schoolDivision}`,
-      form.revenue && `매출액: ${Number(form.revenue).toLocaleString()}원`,
-      form.civilFee && `민원수수료: ${Number(form.civilFee).toLocaleString()}원`,
     ].filter(Boolean);
     return parts.length > 0 ? parts.join(" | ") : null;
   }
@@ -2283,6 +2353,7 @@ export default function App() {
     }
 
     const schoolId = uploadForm.schoolId.trim() || undefined;
+    const visaTypeCode = uploadForm.visaTypeCode.trim() || undefined;
     const note = buildUploadNote(uploadForm) || undefined;
 
     setRuntimeError("");
@@ -2298,6 +2369,7 @@ export default function App() {
         await uploadAgencyBatchFile(session.username, session.password, selectedZipFile, {
           schoolId,
           note,
+          visaTypeCode,
         }),
         { fileName: selectedZipFile.name },
       );
@@ -2506,6 +2578,7 @@ export default function App() {
           uploadForm={uploadForm}
           onUploadFormChange={handleUploadFormChange}
           selectedZipFile={selectedZipFile}
+          schools={schools}
         />
       );
     }
@@ -2536,6 +2609,7 @@ export default function App() {
       <AgencyUploadHistoryDetailPage
         batch={selectedAgencyBatch}
         onBack={() => setPage("agency-upload-history")}
+        ocrProgress={ocrProgress}
       />
     );
   }
