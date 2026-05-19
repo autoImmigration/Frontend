@@ -1890,7 +1890,9 @@ function AuthenticatedImage({ batchId, filename, username, password }) {
 
 function BatchCaseDetailModal({ caseData, batchId, session, onClose }) {
   const [selectedDocCode, setSelectedDocCode] = useState(caseData.documents[0]?.code ?? null);
-  const selectedDoc = caseData.documents.find((d) => d.code === selectedDocCode) ?? null;
+  const isOtherDoc = selectedDocCode?.startsWith("other:");
+  const otherFilename = isOtherDoc ? selectedDocCode.slice(6) : null;
+  const selectedDoc = isOtherDoc ? null : (caseData.documents.find((d) => d.code === selectedDocCode) ?? null);
 
   return (
     <div
@@ -1934,10 +1936,38 @@ function BatchCaseDetailModal({ caseData, batchId, session, onClose }) {
                 <StatusBadge value={doc.status} />
               </button>
             ))}
+            {caseData.otherDocuments && caseData.otherDocuments.length > 0 && (
+              <>
+                <div style={{ padding: "8px 12px 4px", fontSize: "0.75rem", color: "var(--color-text-muted, #9ca3af)", fontWeight: 600, letterSpacing: "0.04em" }}>
+                  기타 서류 ({caseData.otherDocuments.length}건)
+                </div>
+                {caseData.otherDocuments.map((filename) => (
+                  <button
+                    key={filename}
+                    type="button"
+                    className={`documentStatusButton${selectedDocCode === `other:${filename}` ? " isActive" : ""}`}
+                    onClick={() => setSelectedDocCode(`other:${filename}`)}
+                  >
+                    <div>
+                      <strong style={{ fontWeight: 400 }}>기타</strong>
+                      <p style={{ fontSize: "0.75rem", marginTop: 2, color: "var(--color-text-muted, #9ca3af)" }}>{filename}</p>
+                    </div>
+                    <span className="status statusNeutral">제출</span>
+                  </button>
+                ))}
+              </>
+            )}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {selectedDoc ? (
+            {otherFilename ? (
+              <AuthenticatedImage
+                batchId={batchId}
+                filename={otherFilename}
+                username={session.username}
+                password={session.password}
+              />
+            ) : selectedDoc ? (
               selectedDoc.sourceFilename ? (
                 <AuthenticatedImage
                   batchId={batchId}
