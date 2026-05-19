@@ -6,6 +6,7 @@ import {
   zipRules,
 } from "./mockData.js";
 import {
+  API_BASE_URL,
   fetchAgencyApplicationDetail,
   fetchAgencyApplications,
   fetchAgencyUploadBatchDetail,
@@ -1422,7 +1423,7 @@ function AgencyDashboardPage({
   );
 }
 
-function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onBack }) {
+function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onBack, session }) {
   return (
     <>
       <PageHeader
@@ -1520,11 +1521,20 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
             <p>선택한 문서의 OCR 요약과 제출 상태를 확인합니다.</p>
           </div>
 
-          <div className="previewSurface">
-            <span className="previewTag">문서 미리보기</span>
-            <strong>{selectedDocument.name}</strong>
-            <p>{selectedDocument.preview}</p>
-          </div>
+          {selectedDocument.sourceFilename && session?.username && application.intakeBatch ? (
+            <AuthenticatedImage
+              batchId={application.intakeBatch}
+              filename={selectedDocument.sourceFilename}
+              username={session.username}
+              password={session.password}
+            />
+          ) : (
+            <div className="previewSurface">
+              <span className="previewTag">문서 미리보기</span>
+              <strong>{selectedDocument.name}</strong>
+              <p>{selectedDocument.preview}</p>
+            </div>
+          )}
 
           <div className="detailInfoGrid previewMetaGrid">
             <div>
@@ -1835,7 +1845,125 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack }) {
   );
 }
 
-function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress }) {
+function AuthenticatedImage({ batchId, filename, username, password }) {
+  const [objectUrl, setObjectUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let created = null;
+    const url = `${API_BASE_URL}/agency/upload-batches/${encodeURIComponent(batchId)}/images/${encodeURIComponent(filename)}`;
+    fetch(url, { headers: { Authorization: `Basic ${btoa(`${username}:${password}`)}` } })
+      .then((r) => {
+        if (!r.ok) throw new Error("not ok");
+        return r.blob();
+      })
+      .then((blob) => {
+        created = URL.createObjectURL(blob);
+        setObjectUrl(created);
+      })
+      .catch(() => setFailed(true));
+    return () => { if (created) URL.revokeObjectURL(created); };
+  }, [batchId, filename, username, password]);
+
+  if (failed) {
+    return (
+      <div className="previewSurface" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "var(--color-text-muted, #6b7280)" }}>이미지를 불러올 수 없습니다.</p>
+      </div>
+    );
+  }
+  if (!objectUrl) {
+    return (
+      <div className="previewSurface" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "var(--color-text-muted, #6b7280)" }}>로딩 중...</p>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={objectUrl}
+      alt={filename}
+      style={{ maxWidth: "100%", maxHeight: "540px", objectFit: "contain", borderRadius: "4px", border: "1px solid var(--color-border, #e5e7eb)" }}
+    />
+  );
+}
+
+function BatchCaseDetailModal({ caseData, batchId, session, onClose }) {
+  const [selectedDocCode, setSelectedDocCode] = useState(caseData.documents[0]?.code ?? null);
+  const selectedDoc = caseData.documents.find((d) => d.code === selectedDocCode) ?? null;
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 100,
+        background: "rgba(0,0,0,0.45)", display: "flex",
+        alignItems: "flex-start", justifyContent: "center",
+        padding: "40px 16px", overflowY: "auto",
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="surfaceCard"
+        style={{ width: "100%", maxWidth: 900, position: "relative" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>{caseData.studentName}</h2>
+            <p style={{ margin: "4px 0 0", color: "var(--color-text-muted, #6b7280)", fontSize: "0.875rem" }}>
+              {caseData.nationality} · {caseData.applicationType} · 제출 {caseData.submittedCount}건
+              {caseData.missingCount > 0 ? ` · 누락 ${caseData.missingCount}건` : ""}
+            </p>
+          </div>
+          <button type="button" className="secondaryButton" onClick={onClose}>닫기</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
+          <div className="documentStatusList" style={{ maxHeight: 540, overflowY: "auto" }}>
+            {caseData.documents.map((doc) => (
+              <button
+                key={doc.code}
+                type="button"
+                className={`documentStatusButton${selectedDocCode === doc.code ? " isActive" : ""}`}
+                onClick={() => setSelectedDocCode(doc.code)}
+              >
+                <div>
+                  <strong>{doc.name}</strong>
+                  {doc.sourceFilename && <p style={{ fontSize: "0.75rem", marginTop: 2, color: "var(--color-text-muted, #9ca3af)" }}>{doc.sourceFilename}</p>}
+                </div>
+                <StatusBadge value={doc.status} />
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {selectedDoc ? (
+              selectedDoc.sourceFilename ? (
+                <AuthenticatedImage
+                  batchId={batchId}
+                  filename={selectedDoc.sourceFilename}
+                  username={session.username}
+                  password={session.password}
+                />
+              ) : (
+                <div className="previewSurface" style={{ minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                  <span className="previewTag">{selectedDoc.status}</span>
+                  <strong style={{ marginTop: 8 }}>{selectedDoc.name}</strong>
+                  <p style={{ marginTop: 4, color: "var(--color-text-muted, #6b7280)" }}>
+                    {selectedDoc.status === "미제출" ? "제출되지 않은 서류입니다." : "이미지 파일 정보가 없습니다."}
+                  </p>
+                </div>
+              )
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress, session }) {
+  const [selectedCaseForDetail, setSelectedCaseForDetail] = useState(null);
   const timeline = buildBatchTimeline(batch);
   const events = buildBatchEvents(batch);
   const hasProcessingJob = Boolean(batch.processingJobId);
@@ -1855,10 +1983,18 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress }) {
 
   return (
     <>
+      {selectedCaseForDetail && (
+        <BatchCaseDetailModal
+          caseData={selectedCaseForDetail}
+          batchId={batch.id}
+          session={session}
+          onClose={() => setSelectedCaseForDetail(null)}
+        />
+      )}
       <PageHeader
         breadcrumb="유학원 / 업로드 내역 상세"
         title={batch.fileName}
-        description="더미 스캔본 미리보기와 학생 구간 분리 결과를 확인합니다."
+        description="학생별 OCR 분석 결과와 제출 서류 이미지를 확인합니다."
         actions={
           <button type="button" className="secondaryButton" onClick={onBack}>
             업로드 내역으로 돌아가기
@@ -1967,6 +2103,7 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress }) {
                 <th>제출</th>
                 <th>누락</th>
                 <th>서류 현황</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -1997,6 +2134,16 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress }) {
                         </span>
                       ))}
                     </div>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondaryButton"
+                      style={{ fontSize: "0.8rem", padding: "4px 10px" }}
+                      onClick={() => setSelectedCaseForDetail(c)}
+                    >
+                      상세보기
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -2554,6 +2701,7 @@ export default function App() {
           selectedDocument={selectedAgencyDocument}
           onSelectDocument={setAgencyPreviewId}
           onBack={() => setPage("agency-dashboard")}
+          session={session}
         />
       );
     }
@@ -2610,6 +2758,7 @@ export default function App() {
         batch={selectedAgencyBatch}
         onBack={() => setPage("agency-upload-history")}
         ocrProgress={ocrProgress}
+        session={session}
       />
     );
   }
