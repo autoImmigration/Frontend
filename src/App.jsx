@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  homePathForRole,
+  matchRoute,
+  pageAllowedForRole,
+  pathForPage,
+} from "./routes.js";
 import {
   loginDefaults,
   nationalityOptions,
@@ -3106,6 +3113,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
 
 function AgencyUploadPage({
   onBack,
+  backLabel = "대시보드",
   onZipFileSelect,
   onSubmit,
   onOpenHistory,
@@ -3134,7 +3142,7 @@ function AgencyUploadPage({
               업로드 내역 보기
             </button>
             <button type="button" className="secondaryButton" onClick={onBack}>
-              대시보드로 돌아가기
+              ← {backLabel}(으)로 돌아가기
             </button>
           </>
         }
@@ -3331,7 +3339,7 @@ function formatProcessingDuration(seconds) {
   return s > 0 ? `${m}분 ${s}초` : `${m}분`;
 }
 
-function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack }) {
+function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "대시보드" }) {
   const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = usePagination(batches, 10);
 
   return (
@@ -3341,7 +3349,7 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack }) {
         description="ZIP 업로드 배치 이력과 처리 결과를 확인합니다. 완료 · 보완 · 반려 · 실패 네 가지 상태로 분류됩니다."
         actions={
           <button type="button" className="secondaryButton" onClick={onBack}>
-            ZIP 업로드로 돌아가기
+            ← {backLabel}(으)로 돌아가기
           </button>
         }
       />
@@ -3497,7 +3505,7 @@ function AuthenticatedImage({ batchId, filename, imgStyle }) {
 }
 
 function BatchCaseDetailPage({
-  caseData, batchId, batchName, session, onBack, onRefresh,
+  caseData, batchId, batchName, session, onBack, backLabel = "목록", onRefresh,
   reviewQueue = [], queueLabel = "검토", onNavigateCase,
 }) {
   const [selectedDocCode, setSelectedDocCode] = useState(caseData.documents[0]?.code ?? null);
@@ -3810,7 +3818,9 @@ function BatchCaseDetailPage({
                 다음 →
               </button>
             )}
-            <button type="button" className="secondaryButton" onClick={onBack}>← 목록으로</button>
+            <button type="button" className="secondaryButton" onClick={onBack}>
+              ← {backLabel}(으)로 돌아가기
+            </button>
           </div>
         }
       />
@@ -4474,7 +4484,7 @@ function caseReviewTier(c) {
   return tier === 9 ? 5 : tier;
 }
 
-function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress, session, onOpenCaseDetail, onReprocessDone, onToggleExclude }) {
+function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 내역", ocrProgress, session, onOpenCaseDetail, onReprocessDone, onToggleExclude }) {
   const [isReprocessing, setIsReprocessing] = useState(false);
   const [bulkApproving, setBulkApproving] = useState(false);
   const timeline = buildBatchTimeline(batch);
@@ -4580,7 +4590,7 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress, session, on
               </button>
             )}
             <button type="button" className="secondaryButton" onClick={onBack}>
-              업로드 내역으로 돌아가기
+              ← {backLabel}(으)로 돌아가기
             </button>
           </>
         }
@@ -4907,11 +4917,48 @@ function clearStudentCreds() {
 }
 
 export default function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // URL이 화면의 단일 진실원. page/파라미터는 여기서 파생된다.
+  const matchedRoute = matchRoute(location.pathname);
+  const page = matchedRoute?.page ?? "login";
+  const routeBatchId = matchedRoute?.params?.batchId ?? null;
+  const routeCaseId = matchedRoute?.params?.caseId ?? null;
+  const routeApplicationId = matchedRoute?.params?.applicationId ?? null;
+  // 드릴다운할 때 출발 화면을 히스토리 state로 넘긴다 → "돌아가기" 문구를 출발지에 맞춘다.
+  const originPage = location.state?.from ?? null;
+
+  /** 화면 이동. 상세로 들어갈 땐 출발지를 함께 기록한다. */
+  const goToPage = useCallback(
+    (nextPage, params = {}, options = {}) => {
+      navigate(pathForPage(nextPage, params), {
+        state: { from: options.from ?? null },
+        replace: Boolean(options.replace),
+      });
+    },
+    [navigate],
+  );
+
+  /**
+   * 돌아가기. 실제 브라우저 히스토리를 되감는다.
+   * 링크/새로고침으로 곧장 들어와 되돌아갈 항목이 없으면 fallbackPage로 보낸다.
+   */
+  const goBack = useCallback(
+    (fallbackPage, params = {}) => {
+      if (location.key !== "default") {
+        navigate(-1);
+        return;
+      }
+      navigate(pathForPage(fallbackPage, params), { replace: true });
+    },
+    [navigate, location.key],
+  );
+
   const [loginType, setLoginType] = useState("student");
   const [studentForm, setStudentForm] = useState(loginDefaults.student);
   const [orgForms, setOrgForms] = useState(emptyOrgForms);
   const [session, setSession] = useState(null);
-  const [page, setPage] = useState("login");
   const [error, setError] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -4921,7 +4968,6 @@ export default function App() {
   const [agencyApplicationDetail, setAgencyApplicationDetail] = useState(null);
   const [agencyUploadBatches, setAgencyUploadBatches] = useState([]);
   const [agencyUploadBatchDetail, setAgencyUploadBatchDetail] = useState(null);
-  const [studentApplicationId, setStudentApplicationId] = useState(null);
   const [schoolSearch, setSchoolSearch] = useState("");
   const [schoolSearchField, setSchoolSearchField] = useState("name");
   const [schoolStatusFilter, setSchoolStatusFilter] = useState(ALL_FILTER);
@@ -4929,7 +4975,6 @@ export default function App() {
   const [agencySearch, setAgencySearch] = useState("");
   const [agencySearchField, setAgencySearchField] = useState("studentName");
   const [agencyStatusFilter, setAgencyStatusFilter] = useState(ALL_FILTER);
-  const [agencyApplicationId, setAgencyApplicationId] = useState(null);
   const [agencyPreviewId, setAgencyPreviewId] = useState(null);
   const [agencyBatchId, setAgencyBatchId] = useState(null);
   const [uploadFeedback, setUploadFeedback] = useState(EMPTY_UPLOAD_FEEDBACK);
@@ -4938,8 +4983,6 @@ export default function App() {
   const [schools, setSchools] = useState([]);
   const [ocrProgress, setOcrProgress] = useState(null);
   const [pollRestartKey, setPollRestartKey] = useState(0);
-  const [agencyDetailReturnPage, setAgencyDetailReturnPage] = useState("agency-dashboard");
-  const [selectedBatchCase, setSelectedBatchCase] = useState(null);
   // 검토 컨텍스트 — 어느 목록에서 케이스 상세로 들어왔는지.
   // 케이스 상세의 "n/N"과 이전/다음 이동이 이 목록을 기준으로 동작해야 한다(어디서 어디로 갔는지 유지).
   // { label: 화면명, ids: 그 목록의 케이스 id 배열(목록과 같은 순서) }
@@ -4947,17 +4990,32 @@ export default function App() {
   const [bootRecovering, setBootRecovering] = useState(true);
   const [loginErrorModal, setLoginErrorModal] = useState(null);
 
+  // 학생 상세는 URL이 곧 선택된 신청 건이다.
+  const studentApplicationId = routeApplicationId;
+
   // 전역 세션 만료 처리: refresh 최종 실패 시 로그인 화면으로.
   useEffect(() => {
     setOnAuthExpired(() => {
       resetRoleData();
       setSession(null);
-      setPage("login");
+      navigate(pathForPage("login"), { replace: true });
       setError("세션이 만료되어 다시 로그인해주세요.");
     });
     return () => setOnAuthExpired(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [navigate]);
+
+  // URL의 배치 id를 상태로 반영 — 딥링크/새로고침/뒤로가기 모두 이 경로로 들어온다.
+  useEffect(() => {
+    if (routeBatchId) setAgencyBatchId(routeBatchId);
+  }, [routeBatchId]);
+
+  // 로그인 상태에서 URL이 비었거나 역할에 맞지 않으면 그 역할의 첫 화면으로.
+  useEffect(() => {
+    if (!session?.isAuthenticated) return;
+    if (matchedRoute && pageAllowedForRole(matchedRoute.page, session.role)) return;
+    navigate(homePathForRole(session.role), { replace: true });
+  }, [session, matchedRoute, navigate]);
 
   // 앱 부팅 시 복구: refresh 토큰이 있으면 access 재발급 후 /auth/me로 사용자 확정.
   useEffect(() => {
@@ -4971,9 +5029,9 @@ export default function App() {
           if (cancelled) return;
           setLoginType("student");
           setStudentApplications(result.applications);
-          setStudentApplicationId(result.applications[0]?.id ?? null);
           setSession(buildSession("student", { ...result.student, ...studentCreds }));
-          setPage("student-list");
+          // 화면 이동은 하지 않는다 — 새로고침 전에 보던 URL을 그대로 유지한다.
+          // (역할에 맞지 않는 URL이면 위의 리다이렉트 effect가 첫 화면으로 보낸다.)
         } catch {
           // 자격 무효(관리자가 정보 수정 등) → 저장 자격 폐기하고 로그인 화면 유지
           clearStudentCreds();
@@ -4999,8 +5057,7 @@ export default function App() {
           backendRole: me.role,
         }));
         await loadDataForView(view);
-        if (cancelled) return;
-        setPage(view === "school" ? "school-list" : "agency-dashboard");
+        // 화면 이동은 하지 않는다 — 새로고침 전에 보던 URL을 그대로 유지한다.
       } catch {
         // 복구 실패 → 로그인 화면 유지
       } finally {
@@ -5020,6 +5077,55 @@ export default function App() {
       .then(setSchools)
       .catch(() => {});
   }, [session?.isAuthenticated]);
+
+  // URL에 배치 id가 있는데 아직 안 불러왔으면 불러온다.
+  // (딥링크·새로고침·다른 배치의 케이스로 이전/다음 이동한 경우)
+  useEffect(() => {
+    if (!session?.isAuthenticated || !routeBatchId) return;
+    if (agencyUploadBatchDetail?.id === routeBatchId) return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    fetchAgencyUploadBatchDetail(routeBatchId)
+      .then((detail) => {
+        if (cancelled) return;
+        const normalized = normalizeAgencyUploadBatch(detail);
+        setAgencyUploadBatchDetail(normalized);
+        upsertAgencyUploadBatch(normalized);
+      })
+      .catch((exception) => {
+        if (!cancelled) setRuntimeError(exception.message);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeBatchId, session?.isAuthenticated]);
+
+  // URL에 케이스 id가 있는 신청 상세(/agency/cases/:caseId)도 마찬가지.
+  useEffect(() => {
+    if (!session?.isAuthenticated) return;
+    if (page !== "agency-detail" || !routeCaseId) return;
+    if (agencyApplicationDetail?.id === routeCaseId) return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    fetchAgencyApplicationDetail(routeCaseId)
+      .then((detail) => {
+        if (cancelled) return;
+        setAgencyApplicationDetail(detail);
+        setAgencyPreviewId(detail.documents[0]?.code ?? null);
+      })
+      .catch((exception) => {
+        if (!cancelled) setRuntimeError(exception.message);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, routeCaseId, session?.isAuthenticated]);
 
   const BATCH_TERMINAL_STATUSES = new Set([
     "COMPLETED",
@@ -5187,11 +5293,19 @@ export default function App() {
     selectedAgencyApplication?.documents[0] ??
     null;
 
-  const selectedAgencyBatch =
-    agencyUploadBatchDetail ??
-    agencyUploadBatches.find((batch) => batch.id === agencyBatchId) ??
-    agencyUploadBatches[0] ??
-    null;
+  // URL에 배치가 지정돼 있으면 반드시 그 배치를 쓴다 — 직전 화면의 배치가 남아 보이면 안 된다.
+  const activeBatchId = routeBatchId ?? agencyBatchId;
+  const selectedAgencyBatch = activeBatchId
+    ? (agencyUploadBatchDetail?.id === activeBatchId
+        ? agencyUploadBatchDetail
+        : agencyUploadBatches.find((batch) => batch.id === activeBatchId) ?? null)
+    : agencyUploadBatchDetail ?? agencyUploadBatches[0] ?? null;
+
+  // 케이스 상세도 URL이 진실원 — 새로고침해도 같은 케이스가 열린다.
+  const selectedBatchCase =
+    routeCaseId && selectedAgencyBatch?.id === routeBatchId
+      ? selectedAgencyBatch?.cases?.find((item) => item.id === routeCaseId) ?? null
+      : null;
 
   function handleStudentFieldChange(field, value) {
     setStudentForm((current) => ({
@@ -5217,11 +5331,9 @@ export default function App() {
     setAgencyApplicationDetail(null);
     setAgencyUploadBatches([]);
     setAgencyUploadBatchDetail(null);
-    setStudentApplicationId(null);
-    setAgencyApplicationId(null);
     setAgencyPreviewId(null);
     setAgencyBatchId(null);
-    setSelectedBatchCase(null);
+    setReviewContext(null);
     setUploadFeedback(EMPTY_UPLOAD_FEEDBACK);
     setUploadForm({ ...EMPTY_UPLOAD_FORM, receiptDate: new Date().toISOString().split("T")[0] });
     setSelectedZipFile(null);
@@ -5241,10 +5353,10 @@ export default function App() {
   }
 
   /**
-   * 케이스 상세 열기. returnPage 를 명시하지 않으면 "지금 보고 있던 화면"으로 돌아간다.
-   * (기존엔 대시보드로 고정돼 있어, 학생목록에서 열어도 대시보드로 튕겼다.)
+   * 신청 케이스 상세(/agency/cases/:caseId) 열기.
+   * from = 출발 화면. 돌아가기 문구를 출발지에 맞추는 데만 쓰인다(실제 되돌아가기는 브라우저 히스토리).
    */
-  async function openAgencyApplicationDetail(applicationId, nextSession = session, returnPage = null) {
+  async function openAgencyApplicationDetail(applicationId, nextSession = session, from = page) {
     if (!nextSession?.isAuthenticated) {
       return;
     }
@@ -5255,14 +5367,16 @@ export default function App() {
     try {
       const detail = await fetchAgencyApplicationDetail(applicationId);
 
-      setAgencyApplicationId(applicationId);
       setAgencyApplicationDetail(detail);
       setAgencyPreviewId(detail.documents[0]?.code ?? null);
-      // 상세에서 상세로 이동하는 경우엔 원래 출발지를 유지(뒤로가기가 제자리를 돌지 않게)
-      setAgencyDetailReturnPage(
-        returnPage ?? (page === "agency-detail" ? agencyDetailReturnPage : page),
+      // 상세에서 상세로 이동하면 원래 출발지를 유지하고 히스토리도 덮어쓴다
+      // (뒤로가기가 상세 사이를 맴돌지 않게).
+      const isDetailToDetail = page === "agency-detail";
+      goToPage(
+        "agency-detail",
+        { caseId: applicationId },
+        { from: isDetailToDetail ? originPage : from, replace: isDetailToDetail },
       );
-      setPage("agency-detail");
     } catch (exception) {
       setRuntimeError(exception.message);
     } finally {
@@ -5270,7 +5384,21 @@ export default function App() {
     }
   }
 
-  async function openAgencyUploadBatchDetail(batchId, nextSession = session) {
+  /** 배치 상세 데이터만 다시 불러온다 — 화면 이동은 하지 않는다(히스토리 오염 방지). */
+  async function refreshBatchDetail(batchId) {
+    const currentBatch =
+      agencyUploadBatches.find((batch) => batch.id === batchId) ??
+      (uploadFeedback.batch?.id === batchId ? uploadFeedback.batch : null);
+    const detail = await fetchAgencyUploadBatchDetail(batchId);
+    const normalizedDetail = normalizeAgencyUploadBatch(detail, currentBatch);
+
+    setAgencyBatchId(batchId);
+    setAgencyUploadBatchDetail(normalizedDetail);
+    upsertAgencyUploadBatch(normalizedDetail);
+    return normalizedDetail;
+  }
+
+  async function openAgencyUploadBatchDetail(batchId, nextSession = session, from = page) {
     if (!nextSession?.isAuthenticated) {
       return;
     }
@@ -5279,16 +5407,8 @@ export default function App() {
     setRuntimeError("");
 
     try {
-      const currentBatch =
-        agencyUploadBatches.find((batch) => batch.id === batchId) ??
-        (uploadFeedback.batch?.id === batchId ? uploadFeedback.batch : null);
-      const detail = await fetchAgencyUploadBatchDetail(batchId);
-      const normalizedDetail = normalizeAgencyUploadBatch(detail, currentBatch);
-
-      setAgencyBatchId(batchId);
-      setAgencyUploadBatchDetail(normalizedDetail);
-      upsertAgencyUploadBatch(normalizedDetail);
-      setPage("agency-upload-history-detail");
+      await refreshBatchDetail(batchId);
+      goToPage("agency-upload-history-detail", { batchId }, { from });
     } catch (exception) {
       setRuntimeError(exception.message);
     } finally {
@@ -5297,7 +5417,11 @@ export default function App() {
   }
 
   async function handleReprocessDone(batchId) {
-    await openAgencyUploadBatchDetail(batchId);
+    try {
+      await refreshBatchDetail(batchId);
+    } catch (exception) {
+      setRuntimeError(exception.message);
+    }
     setPollRestartKey((k) => k + 1);
   }
 
@@ -5311,7 +5435,7 @@ export default function App() {
       } else {
         await excludeAgencyCase(caseId);
       }
-      if (batchId) await openAgencyUploadBatchDetail(batchId);
+      if (batchId) await refreshBatchDetail(batchId);
     } catch (exception) {
       setRuntimeError(exception.message);
     }
@@ -5340,24 +5464,17 @@ export default function App() {
     setIsLoading(true);
     setRuntimeError("");
     try {
-      const currentBatch = agencyUploadBatches.find((b) => b.id === batchId) ?? null;
-      const detail = await fetchAgencyUploadBatchDetail(batchId);
-      const normalizedDetail = normalizeAgencyUploadBatch(detail, currentBatch);
-
-      setAgencyBatchId(batchId);
-      setAgencyUploadBatchDetail(normalizedDetail);
-      upsertAgencyUploadBatch(normalizedDetail);
+      const normalizedDetail = await refreshBatchDetail(batchId);
       setReviewContext(
         queueIds.length > 0 ? { label: "보완 접수", ids: queueIds } : null,
       );
 
       const found = normalizedDetail.cases?.find((c) => c.id === caseId);
       if (found) {
-        setSelectedBatchCase(found);
-        setPage("agency-batch-case-detail");
+        goToPage("agency-batch-case-detail", { batchId, caseId }, { from: page });
       } else {
         // 케이스를 못 찾으면 배치 상세로 폴백
-        setPage("agency-upload-history-detail");
+        goToPage("agency-upload-history-detail", { batchId }, { from: page });
       }
     } catch (exception) {
       setRuntimeError(exception.message);
@@ -5368,31 +5485,22 @@ export default function App() {
 
   /**
    * 케이스 상세 간 이동(이전/다음). 검토 큐가 보완 접수처럼 여러 배치에 걸칠 수 있으므로,
-   * 현재 배치에 없으면 그 케이스가 속한 배치를 불러온 뒤 이동한다.
+   * 현재 배치에 없으면 그 케이스가 속한 배치의 URL로 이동한다(데이터는 로더 effect가 불러온다).
+   *
+   * replace: 이전/다음은 히스토리에 쌓지 않는다 — 검토를 5명 넘긴 뒤 "돌아가기"를 눌렀을 때
+   * 케이스들을 하나씩 되짚지 않고 곧장 출발한 목록으로 돌아가야 한다.
    */
-  async function navigateToCase(caseId) {
-    const inCurrent = agencyUploadBatchDetail?.cases?.find((c) => c.id === caseId);
-    if (inCurrent) {
-      setSelectedBatchCase(inCurrent);
-      return;
-    }
-    const owner = agencyApplications.find((a) => a.id === caseId)?.intakeBatch;
+  function navigateToCase(caseId) {
+    const owner =
+      agencyUploadBatchDetail?.cases?.some((c) => c.id === caseId)
+        ? agencyUploadBatchDetail.id
+        : agencyApplications.find((a) => a.id === caseId)?.intakeBatch;
     if (!owner) return;
-    setIsLoading(true);
-    try {
-      const detail = await fetchAgencyUploadBatchDetail(owner);
-      const normalized = normalizeAgencyUploadBatch(
-        detail, agencyUploadBatches.find((b) => b.id === owner) ?? null);
-      setAgencyBatchId(owner);
-      setAgencyUploadBatchDetail(normalized);
-      upsertAgencyUploadBatch(normalized);
-      const found = normalized.cases?.find((c) => c.id === caseId);
-      if (found) setSelectedBatchCase(found);
-    } catch (exception) {
-      setRuntimeError(exception.message);
-    } finally {
-      setIsLoading(false);
-    }
+    goToPage(
+      "agency-batch-case-detail",
+      { batchId: owner, caseId },
+      { from: originPage, replace: true },
+    );
   }
 
   function handleUploadFormChange(field, value) {
@@ -5516,7 +5624,6 @@ export default function App() {
       ? batches.map((batch) => normalizeAgencyUploadBatch(batch))
       : [];
     setAgencyApplications(cases);
-    setAgencyApplicationId(cases[0]?.id ?? null);
     setAgencyUploadBatches(normalizedBatches);
     setAgencyBatchId(normalizedBatches[0]?.id ?? null);
   }
@@ -5544,9 +5651,8 @@ export default function App() {
 
         saveStudentCreds(studentForm); // 새로고침 시 자동 재로그인용 (탭 세션)
         setStudentApplications(result.applications);
-        setStudentApplicationId(result.applications[0]?.id ?? null);
         setSession(buildSession("student", { ...result.student, ...studentForm }));
-        setPage("student-list");
+        goToPage("student-list", {}, { replace: true });
         return;
       }
 
@@ -5563,12 +5669,15 @@ export default function App() {
         displayName: auth.displayName,
         backendRole: auth.role,
       });
-      setSession(nextSession);
 
+      // 세션은 갈 곳을 정한 다음에 세팅한다. 먼저 세팅하면 "역할 첫 화면" 리다이렉트
+      // effect가 즉시 발동해, 남은 await가 끝난 뒤의 이동과 경쟁한다(사용자가 이미
+      // 다른 메뉴를 눌렀는데 뒤늦게 화면이 바뀌는 문제).
       if (loginType === "school") {
         const rows = await fetchSchoolStudents();
         setSchoolStudents(rows);
-        setPage("school-list");
+        setSession(nextSession);
+        goToPage("school-list", {}, { replace: true });
         return;
       }
 
@@ -5581,7 +5690,6 @@ export default function App() {
         : [];
 
       setAgencyApplications(cases);
-      setAgencyApplicationId(cases[0]?.id ?? null);
       setAgencyUploadBatches(normalizedBatches);
 
       // 처리 중인 배치가 있으면 바로 상세 화면으로 복귀
@@ -5596,15 +5704,20 @@ export default function App() {
           setAgencyBatchId(activeBatch.id);
           setAgencyUploadBatchDetail(normalizedDetail);
           upsertAgencyUploadBatch(normalizedDetail);
-          setPage("agency-upload-history-detail");
+          setSession(nextSession);
+          goToPage(
+            "agency-upload-history-detail",
+            { batchId: activeBatch.id },
+            { from: "agency-dashboard", replace: true },
+          );
+          return;
         } catch {
-          setAgencyBatchId(normalizedBatches[0]?.id ?? null);
-          setPage("agency-dashboard");
+          // 상세 로드 실패 → 대시보드로
         }
-      } else {
-        setAgencyBatchId(normalizedBatches[0]?.id ?? null);
-        setPage("agency-dashboard");
       }
+      setAgencyBatchId(normalizedBatches[0]?.id ?? null);
+      setSession(nextSession);
+      goToPage("agency-dashboard", {}, { replace: true });
     } catch (exception) {
       setLoginErrorModal(exception.message || "로그인에 실패했습니다.");
     } finally {
@@ -5617,7 +5730,7 @@ export default function App() {
     clearStudentCreds(); // 학생 자동 재로그인 자격 폐기
     resetRoleData();
     setSession(null);
-    setPage("login");
+    navigate(pathForPage("login"), { replace: true });
     setError("");
     setRuntimeError("");
   }
@@ -5648,8 +5761,7 @@ export default function App() {
             }));
           }}
           onOpenDetail={(applicationId) => {
-            setStudentApplicationId(applicationId);
-            setPage("student-detail");
+            goToPage("student-detail", { applicationId }, { from: page });
           }}
         />
       );
@@ -5668,7 +5780,7 @@ export default function App() {
         <StudentDetailPage
           application={selectedStudentApplication}
           session={session}
-          onBack={() => setPage("student-list")}
+          onBack={() => goBack("student-list")}
           onRefreshApplications={async () => {
             // 재조회로 서류 상태 즉시 반영 (lookup이 학생 토큰도 재발급해 만료도 함께 해소)
             const result = await lookupStudentAccess({
@@ -5704,8 +5816,8 @@ export default function App() {
         <AgencyDashboardPage
           batches={agencyUploadBatches}
           onOpenDetail={openAgencyUploadBatchDetail}
-          onOpenUpload={() => setPage("agency-upload")}
-          onOpenDownload={() => setPage("agency-download")}
+          onOpenUpload={() => goToPage("agency-upload", {}, { from: page })}
+          onOpenDownload={() => goToPage("agency-download", {}, { from: page })}
         />
       );
     }
@@ -5728,8 +5840,8 @@ export default function App() {
           application={selectedAgencyApplication}
           selectedDocument={selectedAgencyDocument}
           onSelectDocument={setAgencyPreviewId}
-          onBack={() => setPage(agencyDetailReturnPage)}
-          backLabel={pageLabel(agencyDetailReturnPage)}
+          onBack={() => goBack(originPage ?? "agency-student-list")}
+          backLabel={pageLabel(originPage ?? "agency-student-list")}
           session={session}
           onStatusChange={(result) => {
             setAgencyApplicationDetail((current) =>
@@ -5761,18 +5873,20 @@ export default function App() {
     if (page === "agency-upload") {
       return (
         <AgencyUploadPage
-          onBack={() => setPage("agency-dashboard")}
+          onBack={() => goBack(originPage ?? "agency-dashboard")}
+          backLabel={pageLabel(originPage ?? "agency-dashboard")}
           onZipFileSelect={handleZipFileSelect}
           onSubmit={handleAgencyUploadSubmit}
-          onOpenHistory={() => setPage("agency-upload-history")}
+          onOpenHistory={() => goToPage("agency-upload-history", {}, { from: page })}
           onOpenUploadedBatch={() => {
-            if (!uploadFeedback.batch?.id) {
+            const batchId = uploadFeedback.batch?.id;
+            if (!batchId) {
               return;
             }
 
-            setAgencyBatchId(uploadFeedback.batch.id);
+            setAgencyBatchId(batchId);
             setAgencyUploadBatchDetail(uploadFeedback.batch);
-            setPage("agency-upload-history-detail");
+            goToPage("agency-upload-history-detail", { batchId }, { from: page });
           }}
           uploadFeedback={uploadFeedback}
           uploadForm={uploadForm}
@@ -5793,7 +5907,8 @@ export default function App() {
         <AgencyUploadHistoryPage
           batches={agencyUploadBatches}
           onOpenDetail={openAgencyUploadBatchDetail}
-          onBack={() => setPage("agency-upload")}
+          onBack={() => goBack(originPage ?? "agency-dashboard")}
+          backLabel={pageLabel(originPage ?? "agency-dashboard")}
         />
       );
     }
@@ -5863,15 +5978,19 @@ export default function App() {
           queueLabel={queueLabel}
           onNavigateCase={(id) => navigateToCase(id)}
           session={session}
-          onBack={() => setPage(fromContext ? "agency-supplement-list" : "agency-upload-history-detail")}
+          onBack={() =>
+            goBack(originPage ?? "agency-upload-history-detail", {
+              batchId: selectedAgencyBatch.id,
+            })
+          }
+          backLabel={pageLabel(originPage, "업로드 배치")}
           onRefresh={async () => {
             try {
               const detail = await fetchAgencyUploadBatchDetail(selectedAgencyBatch.id);
               const normalized = normalizeAgencyUploadBatch(detail, selectedAgencyBatch);
               setAgencyUploadBatchDetail(normalized);
               upsertAgencyUploadBatch(normalized);
-              const updated = normalized.cases?.find((c) => c.id === selectedBatchCase.id);
-              if (updated) setSelectedBatchCase(updated);
+              // selectedBatchCase 는 이 배치에서 파생되므로 별도 갱신이 필요 없다.
               // 학생/대시보드/보완 목록 소스도 갱신 (배치뷰에서 완료/매핑한 변경이 즉시 반영되도록)
               fetchAgencyApplications().then((cases) => setAgencyApplications(cases)).catch(() => {});
             } catch (_) {}
@@ -5895,14 +6014,19 @@ export default function App() {
     return (
       <AgencyUploadHistoryDetailPage
         batch={selectedAgencyBatch}
-        onBack={() => setPage("agency-upload-history")}
+        onBack={() => goBack(originPage ?? "agency-upload-history")}
+        backLabel={pageLabel(originPage ?? "agency-upload-history")}
         ocrProgress={ocrProgress}
         session={session}
         onOpenCaseDetail={(id) => {
           const found = selectedAgencyBatch?.cases?.find((c) => c.id === id);
           if (found) {
-            setSelectedBatchCase(found);
-            setPage("agency-batch-case-detail");
+            setReviewContext(null); // 배치 상세에서 들어오면 검토 큐는 이 배치 기준
+            goToPage(
+              "agency-batch-case-detail",
+              { batchId: selectedAgencyBatch.id, caseId: id },
+              { from: page },
+            );
           }
         }}
         onReprocessDone={handleReprocessDone}
@@ -5953,7 +6077,7 @@ export default function App() {
     <AppShell
       session={session}
       page={page}
-      onNavigate={setPage}
+      onNavigate={(nextPage) => goToPage(nextPage)}
       onLogout={handleLogout}
       navBadges={navBadges}
     >
