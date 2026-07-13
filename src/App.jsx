@@ -1943,26 +1943,28 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
   const [statusChanging, setStatusChanging] = useState(false);
   const [noteText, setNoteText] = useState(selectedDocument.note ?? "");
   const [noteSaving, setNoteSaving] = useState(false);
-  const [zoomScale, setZoomScale] = useState(1);
-  const [origin, setOrigin] = useState({ x: 50, y: 50 });
   const [showExtraInfo, setShowExtraInfo] = useState(false);
-  const zoomBoxRef = useRef(null);
 
-  // Attach a native (non-passive) wheel listener so we can preventDefault page scroll
-  // while zooming the center image box. React's onWheel is passive and can't do this.
-  useEffect(() => {
-    const box = zoomBoxRef.current;
-    if (!box) return undefined;
-    const handleWheel = (e) => {
-      e.preventDefault();
-      setZoomScale((s) => {
-        const next = s + (e.deltaY < 0 ? 0.2 : -0.2);
-        return Math.min(4, Math.max(1, +next.toFixed(2)));
-      });
-    };
-    box.addEventListener("wheel", handleWheel, { passive: false });
-    return () => box.removeEventListener("wheel", handleWheel);
-  }, [selectedDocument.sourceFilename]);
+  // 이미지 보기 — 업로드 내역 학생 상세와 동일: 클릭 → 모달, 휠 줌, 드래그 이동
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomOffset, setZoomOffset] = useState({ x: 0, y: 0 });
+  const zoomDrag = useRef(null);
+
+  function openZoom(filename) {
+    setZoomScale(1);
+    setZoomOffset({ x: 0, y: 0 });
+    setZoomedImage(filename);
+  }
+
+  // 한 양식에 스캔이 여러 장일 수 있다(1:N). 레거시 단일 sourceFilename 도 1장으로 취급.
+  const docFiles = selectedDocument.sourceFilenames?.length
+    ? selectedDocument.sourceFilenames
+    : (selectedDocument.sourceFilename ? [selectedDocument.sourceFilename] : []);
+  const [activeFileIndex, setActiveFileIndex] = useState(0);
+  useEffect(() => { setActiveFileIndex(0); }, [selectedDocument.code]);
+  const safeFileIndex = Math.min(activeFileIndex, Math.max(docFiles.length - 1, 0));
+  const imageFilename = docFiles[safeFileIndex] ?? null;
 
   // Sync note textarea when selected document changes
   useEffect(() => {
@@ -2045,6 +2047,35 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
         }
       />
 
+      {/* 확대 모달 — 업로드 내역 학생 상세와 동일: 휠 줌, 드래그 이동, 더블클릭 리셋 */}
+      {zoomedImage && (
+        <div onClick={() => setZoomedImage(null)}
+          onWheel={(e) => setZoomScale((s) => Math.min(8, Math.max(1, s - e.deltaY * 0.0015)))}
+          style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out", overflow: "hidden" }}>
+          <button type="button" onClick={() => setZoomedImage(null)}
+            style={{ position: "absolute", top: 16, right: 20, background: "none", border: "none", color: "#fff", fontSize: "1.8rem", cursor: "pointer", lineHeight: 1, zIndex: 1 }}>✕</button>
+          <div style={{ position: "absolute", top: 18, left: 20, color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+            휠: 확대/축소 · 드래그: 이동 · 더블클릭: 원래대로 · {Math.round(zoomScale * 100)}%
+          </div>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => { zoomDrag.current = { x: e.clientX - zoomOffset.x, y: e.clientY - zoomOffset.y }; }}
+            onMouseMove={(e) => { if (zoomDrag.current) setZoomOffset({ x: e.clientX - zoomDrag.current.x, y: e.clientY - zoomDrag.current.y }); }}
+            onMouseUp={() => { zoomDrag.current = null; }}
+            onMouseLeave={() => { zoomDrag.current = null; }}
+            onDoubleClick={() => { setZoomScale(1); setZoomOffset({ x: 0, y: 0 }); }}
+            style={{
+              maxWidth: "94vw", maxHeight: "92vh",
+              cursor: zoomScale > 1 ? "grab" : "default",
+              transform: `translate(${zoomOffset.x}px, ${zoomOffset.y}px) scale(${zoomScale})`,
+              transition: zoomDrag.current ? "none" : "transform 0.08s ease-out",
+            }}>
+            <AuthenticatedImage batchId={application.intakeBatch} filename={zoomedImage}
+              imgStyle={{ maxWidth: "94vw", maxHeight: "92vh", objectFit: "contain", display: "block", pointerEvents: "none" }} />
+          </div>
+        </div>
+      )}
+
       <div className="agencyDetailThreeSplit">
         {/* LEFT: 문서 체크리스트 */}
         <div className="surfaceCard" style={{ padding: "16px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2090,39 +2121,51 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
             </h2>
             <p>{selectedDocument.category}</p>
           </div>
-          {selectedDocument.sourceFilename && session?.isAuthenticated && application.intakeBatch ? (
+          {imageFilename && session?.isAuthenticated && application.intakeBatch ? (
             <div>
+              {/* 한 양식에 스캔이 여러 장이면 장 선택 탭 */}
+              {docFiles.length > 1 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {docFiles.map((fn, idx) => {
+                    const active = idx === safeFileIndex;
+                    return (
+                      <button
+                        key={fn}
+                        type="button"
+                        onClick={() => setActiveFileIndex(idx)}
+                        title={fn}
+                        style={{
+                          fontSize: 11, padding: "4px 10px", borderRadius: 8, cursor: "pointer",
+                          border: `1px solid ${active ? "var(--primary,#2563eb)" : "var(--line,#e5e7eb)"}`,
+                          background: active ? "var(--primary-tint,#eff6ff)" : "#fff",
+                          color: active ? "var(--primary,#2563eb)" : "var(--text-secondary,#374151)",
+                          fontWeight: active ? 600 : 400,
+                        }}
+                      >
+                        {idx + 1}장
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <div
-                ref={zoomBoxRef}
-                onMouseMove={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const x = ((e.clientX - rect.left) / rect.width) * 100;
-                  const y = ((e.clientY - rect.top) / rect.height) * 100;
-                  setOrigin({ x: Math.min(100, Math.max(0, x)), y: Math.min(100, Math.max(0, y)) });
-                }}
-                onMouseLeave={() => { setZoomScale(1); setOrigin({ x: 50, y: 50 }); }}
+                onClick={() => openZoom(imageFilename)}
+                title="클릭하면 확대 (확대 후 휠로 줌, 드래그로 이동)"
                 style={{
-                  width: "100%",
-                  height: 540,
-                  overflow: "hidden",
-                  position: "relative",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "1px solid var(--line)",
-                  background: "#fff",
-                  borderRadius: 4,
+                  width: "100%", height: 540, overflow: "hidden",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "1px solid var(--line)", background: "#fff", borderRadius: 4,
                   cursor: "zoom-in",
                 }}
               >
                 <AuthenticatedImage
                   batchId={application.intakeBatch}
-                  filename={selectedDocument.sourceFilename}
-                  imgStyle={{ maxWidth: "100%", maxHeight: "540px", objectFit: "contain", display: "block", transform: `scale(${zoomScale})`, transformOrigin: `${origin.x}% ${origin.y}%`, transition: "transform 0.06s ease-out" }}
+                  filename={imageFilename}
+                  imgStyle={{ maxWidth: "100%", maxHeight: "540px", objectFit: "contain", display: "block" }}
                 />
               </div>
               <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "6px 0 0", textAlign: "center" }}>
-                휠로 확대 · 마우스로 이동 ({Math.round(zoomScale * 100)}%)
+                클릭하면 확대 · 확대 후 휠로 줌, 드래그로 이동
               </p>
             </div>
           ) : (
