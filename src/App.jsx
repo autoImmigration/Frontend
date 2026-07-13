@@ -589,6 +589,13 @@ function normalizeAgencyUploadBatch(batch, fallback = {}) {
       mergedBatch.uploadedFileName ??
       fallback.fileName ??
       "업로드 ZIP",
+    // 화면에 보여줄 배치 이름 — "D4연장 · 2026-07-11 14:02". 백엔드가 안 주면 파일명으로 폴백.
+    displayName:
+      mergedBatch.displayName ??
+      fallback.displayName ??
+      mergedBatch.fileName ??
+      fallback.fileName ??
+      "",
     uploadedAt: formatDisplayDateTime(
       mergedBatch.uploadedAt ??
         mergedBatch.createdAt ??
@@ -1682,7 +1689,7 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
               <thead>
                 <tr>
                   <th>접수일</th>
-                  <th>파일명</th>
+                  <th>배치</th>
                   <th>학교명</th>
                   <th>학생 수</th>
                   <th>상태</th>
@@ -1694,7 +1701,12 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
                 {pagedBatches.map((batch) => (
                   <tr key={batch.id}>
                     <td data-label="접수일">{batch.uploadedAt}</td>
-                    <td data-label="파일명">{batch.fileName}</td>
+                    <td data-label="배치">
+                      {batch.displayName || batch.fileName}
+                      <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
+                        {batch.fileName}
+                      </span>
+                    </td>
                     <td data-label="학교명">{batch.schoolName ?? "—"}</td>
                     <td data-label="학생 수">{batch.studentCount == null ? "—" : `${batch.studentCount}명`}</td>
                     <td data-label="상태"><StatusBadge value={batch.status} /></td>
@@ -1894,7 +1906,7 @@ function AgencyDownloadPage({ session, schools, batches }) {
                 <option value="">전체 배치</option>
                 {batches.map((batch) => (
                   <option key={batch.id} value={batch.id}>
-                    {batch.fileName} ({batch.uploadedAt})
+                    {batch.displayName || batch.fileName}
                   </option>
                 ))}
               </select>
@@ -2385,7 +2397,7 @@ function AgencyFileListPage({ batches, session }) {
   }
 
   const breadcrumbParts = ["파일 목록"];
-  if (level >= 1 && selectedBatch) breadcrumbParts.push(selectedBatch.fileName);
+  if (level >= 1 && selectedBatch) breadcrumbParts.push(selectedBatch.displayName || selectedBatch.fileName);
   if (level >= 2 && selectedCase) breadcrumbParts.push(selectedCase.studentName);
 
   const caseDocuments = level === 2 && selectedCase
@@ -2444,8 +2456,8 @@ function AgencyFileListPage({ batches, session }) {
                 <FolderCard
                   key={batch.id}
                   icon="📁"
-                  name={batch.fileName}
-                  meta={[batch.uploadedAt, batch.studentCount != null ? `${batch.studentCount}명` : null]}
+                  name={batch.displayName || batch.fileName}
+                  meta={[batch.fileName, batch.studentCount != null ? `${batch.studentCount}명` : null]}
                   onClick={() => handleOpenBatch(batch)}
                   disabled={loadingBatch}
                 />
@@ -2466,7 +2478,7 @@ function AgencyFileListPage({ batches, session }) {
               <button type="button" className="secondaryButton" onClick={handleBack} style={{ fontSize: "0.8rem", padding: "4px 10px" }}>← 뒤로</button>
               <h2>학생 폴더</h2>
             </div>
-            <p>{selectedBatch.fileName} 케이스의 학생 목록입니다.</p>
+            <p>{selectedBatch.displayName || selectedBatch.fileName} 케이스의 학생 목록입니다.</p>
           </div>
           {!selectedBatch.cases || selectedBatch.cases.length === 0 ? (
             <EmptyState title="학생 케이스가 없습니다." description="배치 처리가 완료되면 학생 폴더가 표시됩니다." />
@@ -2622,6 +2634,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   const [visaFilter, setVisaFilter] = useState(ALL_FILTER);
   const [schoolFilter, setSchoolFilter] = useState(ALL_FILTER);
   const [statusFilter, setStatusFilter] = useState(ALL_FILTER);
+  const [batchFilter, setBatchFilter] = useState(ALL_FILTER);
   const [excludingId, setExcludingId] = useState(null);
 
   // 학생 목록 = 검토 완료('완료')된 학생만. 검토 필요/보완 중인 케이스는 업로드 상세·보완접수에서
@@ -2634,6 +2647,16 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   const nationalityOptionsList = [...new Set(normalApps.map((a) => a.nationality).filter(Boolean))];
   const visaOptionsList = [...new Set(normalApps.map((a) => a.visaType).filter(Boolean))];
   const schoolOptionsList = [...new Set(normalApps.map((a) => a.schoolName).filter(Boolean))];
+  // 업로드 배치 옵션 — id로 필터하되 표시는 원본 zip 파일명
+  const batchOptionsList = useMemo(() => {
+    const seen = new Map();
+    normalApps.forEach((a) => {
+      if (a.intakeBatch && !seen.has(a.intakeBatch)) {
+        seen.set(a.intakeBatch, a.intakeBatchName || a.intakeBatch);
+      }
+    });
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [applications]);
 
   // 다중 독립 필터 — 모두 AND. 백엔드 정렬(배치 순서 + 배치 내 순서)을 보존한다.
   const rows = useMemo(() => {
@@ -2645,11 +2668,12 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
       const matchesVisa = visaFilter === ALL_FILTER || a.visaType === visaFilter;
       const matchesSchool = schoolFilter === ALL_FILTER || a.schoolName === schoolFilter;
       const matchesStatus = statusFilter === ALL_FILTER || a.status === statusFilter;
-      return matchesName && matchesNationality && matchesVisa && matchesSchool && matchesStatus;
+      const matchesBatch = batchFilter === ALL_FILTER || a.intakeBatch === batchFilter;
+      return matchesName && matchesNationality && matchesVisa && matchesSchool && matchesStatus && matchesBatch;
     });
-  }, [applications, nameFilter, nationalityFilter, visaFilter, schoolFilter, statusFilter]);
+  }, [applications, nameFilter, nationalityFilter, visaFilter, schoolFilter, statusFilter, batchFilter]);
 
-  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${statusFilter}`;
+  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${statusFilter}|${batchFilter}`;
   const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedRows } =
     usePagination(rows, 15, filterKey);
 
@@ -2723,6 +2747,16 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
               <option value="완료">완료</option>
             </select>
           </label>
+
+          <label className="field">
+            <span>업로드 배치</span>
+            <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              {batchOptionsList.map((b) => (
+                <option key={b.id} value={b.id}>{b.label}</option>
+              ))}
+            </select>
+          </label>
         </div>
 
         <SectionMeta count={`${rows.length}명`} helper={totalPages > 1 ? `${currentPage} / ${totalPages} 페이지` : undefined} />
@@ -2739,7 +2773,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                   <th>외국인등록번호</th>
                   <th>학교명</th>
                   <th>비자 타입</th>
-                  <th>업로드 날짜</th>
+                  <th>업로드 배치</th>
                   <th>상태</th>
                   <th />
                 </tr>
@@ -2754,7 +2788,13 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                     </td>
                     <td data-label="학교명">{a.schoolName}</td>
                     <td data-label="비자 타입">{a.visaType}</td>
-                    <td data-label="업로드 날짜">{a.uploadedAt || a.applicationDate || "—"}</td>
+                    <td data-label="업로드 배치">
+                      {a.intakeBatchName || "—"}
+                      <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
+                        {a.uploadedAt || a.applicationDate || "—"}
+                        {a.batchOrderIndex ? ` · ${a.batchOrderIndex}번` : ""}
+                      </span>
+                    </td>
                     <td data-label="상태">
                       <StatusBadge value={a.status} />
                     </td>
@@ -2788,24 +2828,76 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
 }
 
 function AgencySupplementListPage({ applications, onSupplementRequest }) {
-  const [search, setSearch] = useState("");
+  // 다중 독립 필터(모두 AND) — 학생목록과 같은 구조
+  const [nameFilter, setNameFilter] = useState("");
+  const [nationalityFilter, setNationalityFilter] = useState(ALL_FILTER);
+  const [visaFilter, setVisaFilter] = useState(ALL_FILTER);
+  const [schoolFilter, setSchoolFilter] = useState(ALL_FILTER);
+  const [batchFilter, setBatchFilter] = useState(ALL_FILTER);
+  const [missingFilter, setMissingFilter] = useState(ALL_FILTER); // 누락 서류 건수 구간
 
-  // 관리자가 '완료' 승인한 건은 학생목록으로 가므로 보완목록에서 제외 (학생은 둘 중 한 곳에만)
-  const supplementApps = applications.filter((a) => !isExtractionFailed(a) && (a.missingCount ?? 0) > 0 && a.status !== "완료");
-  const failedApps     = applications.filter((a) => isExtractionFailed(a));
-
-  const filtered = (apps) => buildStudentMap(apps).filter(
-    (s) =>
-      !search ||
-      (s.studentName || "").toLowerCase().includes(search.toLowerCase()) ||
-      s.nationality?.toLowerCase().includes(search.toLowerCase()) ||
-      s.schoolName?.toLowerCase().includes(search.toLowerCase()),
+  // 이 화면 대상 = 누락 있음(미완료) + 추출 실패. 옵션은 이 모수에서만 뽑아 빈 옵션을 막는다.
+  const targetApps = useMemo(
+    () => applications.filter(
+      (a) => isExtractionFailed(a) || ((a.missingCount ?? 0) > 0 && a.status !== "완료"),
+    ),
+    [applications],
   );
 
-  const supplementStudents = useMemo(() => filtered(supplementApps), [applications, search]);
-  const failedStudents     = useMemo(() => filtered(failedApps),     [applications, search]);
+  const nationalityOptionsList = [...new Set(targetApps.map((a) => a.nationality).filter(Boolean))];
+  const visaOptionsList = [...new Set(targetApps.map((a) => a.visaType).filter(Boolean))];
+  const schoolOptionsList = [...new Set(targetApps.map((a) => a.schoolName).filter(Boolean))];
+  const batchOptions = useMemo(() => {
+    const seen = new Map();
+    targetApps.forEach((a) => {
+      if (a.intakeBatch && !seen.has(a.intakeBatch)) {
+        seen.set(a.intakeBatch, a.intakeBatchName || a.intakeBatch);
+      }
+    });
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [targetApps]);
 
-  const SupplementTable = ({ rows, isFailed }) => (
+  const matchesFilters = (a) => {
+    const nameQuery = nameFilter.trim().toLowerCase();
+    const missing = a.missingCount ?? 0;
+    const matchesMissing =
+      missingFilter === ALL_FILTER
+      || (missingFilter === "1-2" && missing >= 1 && missing <= 2)
+      || (missingFilter === "3-5" && missing >= 3 && missing <= 5)
+      || (missingFilter === "6+" && missing >= 6);
+    return (!nameQuery || (a.studentName ?? "").toLowerCase().includes(nameQuery))
+      && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
+      && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
+      && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
+      && (batchFilter === ALL_FILTER || a.intakeBatch === batchFilter)
+      && matchesMissing;
+  };
+
+  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${batchFilter}|${missingFilter}`;
+
+  // 관리자가 '완료' 승인한 건은 학생목록으로 가므로 보완목록에서 제외 (학생은 둘 중 한 곳에만)
+  const supplementStudents = useMemo(
+    () => buildStudentMap(targetApps.filter(
+      (a) => !isExtractionFailed(a) && matchesFilters(a),
+    )),
+    [targetApps, filterKey],
+  );
+  // 추출 실패는 학생명·누락건수가 없을 수 있어 이름/누락 필터는 적용하지 않는다
+  const failedStudents = useMemo(
+    () => buildStudentMap(targetApps.filter(
+      (a) => isExtractionFailed(a)
+        && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
+        && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
+        && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
+        && (batchFilter === ALL_FILTER || a.intakeBatch === batchFilter),
+    )),
+    [targetApps, filterKey],
+  );
+
+  const SupplementTable = ({ rows, isFailed }) => {
+    // 이 목록의 순서 = 케이스 상세의 "보완 접수 n/N" 및 이전/다음 이동 기준
+    const queueIds = rows.map((s) => s.latestCase?.id).filter(Boolean);
+    return (
     <div className="tableWrap">
       <table className="dataTable stackedTable">
         <thead>
@@ -2813,6 +2905,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
             <th>학생명</th>
             <th>국적</th>
             <th>학교명</th>
+            <th>업로드 배치</th>
             <th>누락 서류</th>
             <th>최근 상태</th>
             <th>작업</th>
@@ -2826,6 +2919,14 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
               </td>
               <td data-label="국적">{s.nationality || "—"}</td>
               <td data-label="학교명">{s.schoolName}</td>
+              <td data-label="업로드 배치">
+                {s.latestCase?.intakeBatchName || "—"}
+                {s.latestCase?.uploadedAt && (
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
+                    {s.latestCase.uploadedAt}
+                  </span>
+                )}
+              </td>
               <td data-label="누락 서류">
                 {isFailed ? "추출 실패" : `${s.latestCase?.missingCount ?? 0}건`}
               </td>
@@ -2838,7 +2939,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
                     type="button"
                     className="primaryButton"
                     style={{ fontSize: "0.8rem", padding: "4px 12px" }}
-                    onClick={() => onSupplementRequest(s.latestCase.intakeBatch, s.latestCase.id)}
+                    onClick={() => onSupplementRequest(s.latestCase.intakeBatch, s.latestCase.id, queueIds)}
                   >
                     처리하기
                   </button>
@@ -2849,7 +2950,8 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
         </tbody>
       </table>
     </div>
-  );
+    );
+  };
 
   return (
     <>
@@ -2861,8 +2963,62 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
       <section className="surfaceCard">
         <div className="toolbarRow">
           <label className="field fieldGrow">
-            <span>검색</span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="학생명 · 국적 · 학교명으로 검색" />
+            <span>학생명</span>
+            <input
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              placeholder="학생명으로 검색"
+            />
+          </label>
+
+          <label className="field fieldCompact">
+            <span>국적</span>
+            <select value={nationalityFilter} onChange={(e) => setNationalityFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              {nationalityOptionsList.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field fieldCompact">
+            <span>비자 타입</span>
+            <select value={visaFilter} onChange={(e) => setVisaFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              {visaOptionsList.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field fieldCompact">
+            <span>학교</span>
+            <select value={schoolFilter} onChange={(e) => setSchoolFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              {schoolOptionsList.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field fieldCompact">
+            <span>누락 서류</span>
+            <select value={missingFilter} onChange={(e) => setMissingFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              <option value="1-2">1~2건</option>
+              <option value="3-5">3~5건</option>
+              <option value="6+">6건 이상</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>업로드 배치</span>
+            <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
+              <option value={ALL_FILTER}>전체</option>
+              {batchOptions.map((b) => (
+                <option key={b.id} value={b.id}>{b.label}</option>
+              ))}
+            </select>
           </label>
         </div>
       </section>
@@ -3288,10 +3444,14 @@ function AuthenticatedImage({ batchId, filename, imgStyle }) {
   return <img src={objectUrl} alt={filename} style={resolvedImgStyle} />;
 }
 
-function BatchCaseDetailPage({ caseData, batchId, session, onBack, onRefresh, reviewQueue = [], onNavigateCase }) {
+function BatchCaseDetailPage({
+  caseData, batchId, batchName, session, onBack, onRefresh,
+  reviewQueue = [], queueLabel = "검토", onNavigateCase,
+}) {
   const [selectedDocCode, setSelectedDocCode] = useState(caseData.documents[0]?.code ?? null);
-  // 검토 큐 내 위치 + 다음 검토 케이스
+  // 검토 큐(= 들어온 목록) 내 위치와 앞/뒤 케이스
   const _qIdx = reviewQueue.indexOf(caseData.id);
+  const _prevReviewId = _qIdx > 0 ? reviewQueue[_qIdx - 1] : null;
   const _nextReviewId = _qIdx >= 0
     ? (_qIdx + 1 < reviewQueue.length ? reviewQueue[_qIdx + 1] : null)
     : (reviewQueue.find((id) => id !== caseData.id) ?? null);
@@ -3578,19 +3738,24 @@ function BatchCaseDetailPage({ caseData, batchId, session, onBack, onRefresh, re
   return (
     <>
       <PageHeader
-        breadcrumb="유학원 / 업로드 내역 상세 / 학생 상세"
+        breadcrumb={`유학원 / ${queueLabel} / 학생 상세`}
         title={formatStudentName(caseData.studentName)}
-        description={`${caseData.nationality} · ${caseData.applicationType} · 제출 ${caseData.submittedCount}건${caseData.missingCount > 0 ? ` · 누락 ${caseData.missingCount}건` : ""}`}
+        description={`${caseData.nationality} · ${caseData.applicationType} · 제출 ${caseData.submittedCount}건${caseData.missingCount > 0 ? ` · 누락 ${caseData.missingCount}건` : ""}${batchName ? ` · 배치 ${batchName}` : ""}`}
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {reviewQueue.length > 0 && (
               <span style={{ fontSize: 12, color: "var(--text-muted,#9ca3af)" }}>
-                검토 {_qIdx >= 0 ? `${_qIdx + 1}/${reviewQueue.length}` : `${reviewQueue.length}건`}
+                {queueLabel} {_qIdx >= 0 ? `${_qIdx + 1}/${reviewQueue.length}` : `${reviewQueue.length}건`}
               </span>
+            )}
+            {_prevReviewId && onNavigateCase && (
+              <button type="button" className="secondaryButton" onClick={() => onNavigateCase(_prevReviewId)}>
+                ← 이전
+              </button>
             )}
             {_nextReviewId && onNavigateCase && (
               <button type="button" className="primaryButton" onClick={() => onNavigateCase(_nextReviewId)}>
-                다음 검토 케이스 →
+                다음 →
               </button>
             )}
             <button type="button" className="secondaryButton" onClick={onBack}>← 목록으로</button>
@@ -4259,10 +4424,43 @@ function caseReviewTier(c) {
 
 function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress, session, onOpenCaseDetail, onReprocessDone, onToggleExclude }) {
   const [isReprocessing, setIsReprocessing] = useState(false);
+  const [bulkApproving, setBulkApproving] = useState(false);
   const timeline = buildBatchTimeline(batch);
   const events = buildBatchEvents(batch);
 
   const canReprocess = REPROCESSABLE_STATUSES.has((batch.uploadBatchStatusRaw ?? "").toUpperCase());
+
+  /**
+   * 검토 필요 케이스 일괄 승인 — 이슈 유무와 무관하게 전부 완료 처리(관리자 판단, 2026-07-13 사용자 결정).
+   * 실패한 건은 그대로 남겨두고 몇 건이 실패했는지 알린다(조용히 삼키지 않음).
+   */
+  async function handleApproveAll(cases) {
+    if (bulkApproving || cases.length === 0) return;
+    const withIssues = cases.filter((c) => (c.missingCount ?? 0) > 0).length;
+    const warning = withIssues > 0
+      ? `\n\n※ 이 중 ${withIssues}명은 누락·검수 이슈가 남아 있습니다. 이슈가 해결되지 않은 채로 승인됩니다.`
+      : "";
+    if (!window.confirm(`검토 필요 ${cases.length}명을 모두 검토 완료 처리하고 학생 목록에 추가할까요?${warning}`)) {
+      return;
+    }
+    setBulkApproving(true);
+    const failed = [];
+    try {
+      for (const c of cases) {
+        try {
+          await updateCaseStatus(c.id, "COMPLETED");
+        } catch {
+          failed.push(c.studentName || c.id);
+        }
+      }
+      await onReprocessDone?.(batch.id);
+      if (failed.length > 0) {
+        alert(`${cases.length - failed.length}명 승인 완료. ${failed.length}명 실패: ${failed.join(", ")}`);
+      }
+    } finally {
+      setBulkApproving(false);
+    }
+  }
 
   async function handleReprocess() {
     if (!canReprocess || isReprocessing) return;
@@ -4528,9 +4726,20 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, ocrProgress, session, on
           <>
             {reviewCases.length > 0 && (
               <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary, #2563eb)" }}>
-                <div className="sectionHeading">
-                  <h2>검토 필요 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--primary, #2563eb)", marginLeft: 6 }}>{reviewCases.length}명</span></h2>
-                  <p>추출값(국적·생년월일 등)과 서류를 한 화면에서 확인·수정한 뒤 <b>[검토 완료]</b>를 누르면 학생 목록에 추가됩니다. 검토 전에는 목록에 나타나지 않습니다.</p>
+                <div className="sectionHeading" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <h2>검토 필요 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--primary, #2563eb)", marginLeft: 6 }}>{reviewCases.length}명</span></h2>
+                    <p>추출값(국적·생년월일 등)과 서류를 한 화면에서 확인·수정한 뒤 <b>[검토 완료]</b>를 누르면 학생 목록에 추가됩니다. 검토 전에는 목록에 나타나지 않습니다.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondaryButton"
+                    style={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                    disabled={bulkApproving}
+                    onClick={() => handleApproveAll(reviewCases)}
+                  >
+                    {bulkApproving ? "승인 중..." : `전체 승인 (${reviewCases.length}명)`}
+                  </button>
                 </div>
                 <table className="dataTable">
                   <thead>
@@ -4679,6 +4888,10 @@ export default function App() {
   const [pollRestartKey, setPollRestartKey] = useState(0);
   const [agencyDetailReturnPage, setAgencyDetailReturnPage] = useState("agency-dashboard");
   const [selectedBatchCase, setSelectedBatchCase] = useState(null);
+  // 검토 컨텍스트 — 어느 목록에서 케이스 상세로 들어왔는지.
+  // 케이스 상세의 "n/N"과 이전/다음 이동이 이 목록을 기준으로 동작해야 한다(어디서 어디로 갔는지 유지).
+  // { label: 화면명, ids: 그 목록의 케이스 id 배열(목록과 같은 순서) }
+  const [reviewContext, setReviewContext] = useState(null);
   const [bootRecovering, setBootRecovering] = useState(true);
   const [loginErrorModal, setLoginErrorModal] = useState(null);
 
@@ -5059,7 +5272,11 @@ export default function App() {
   }
 
   // 보완 접수에서 처리하기 → 배치 로드 후 곧바로 케이스 상세로 이동
-  async function handleSupplementFromStudentList(batchId, caseId) {
+  /**
+   * 보완 접수 목록에서 "처리하기" 진입.
+   * queueIds = 그 화면이 보여주던 목록 순서 그대로 → 케이스 상세의 "n/N"·이전/다음이 이 목록을 따른다.
+   */
+  async function handleSupplementFromStudentList(batchId, caseId, queueIds = []) {
     if (!session?.isAuthenticated || !batchId) return;
     setIsLoading(true);
     setRuntimeError("");
@@ -5071,6 +5288,9 @@ export default function App() {
       setAgencyBatchId(batchId);
       setAgencyUploadBatchDetail(normalizedDetail);
       upsertAgencyUploadBatch(normalizedDetail);
+      setReviewContext(
+        queueIds.length > 0 ? { label: "보완 접수", ids: queueIds } : null,
+      );
 
       const found = normalizedDetail.cases?.find((c) => c.id === caseId);
       if (found) {
@@ -5080,6 +5300,35 @@ export default function App() {
         // 케이스를 못 찾으면 배치 상세로 폴백
         setPage("agency-upload-history-detail");
       }
+    } catch (exception) {
+      setRuntimeError(exception.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  /**
+   * 케이스 상세 간 이동(이전/다음). 검토 큐가 보완 접수처럼 여러 배치에 걸칠 수 있으므로,
+   * 현재 배치에 없으면 그 케이스가 속한 배치를 불러온 뒤 이동한다.
+   */
+  async function navigateToCase(caseId) {
+    const inCurrent = agencyUploadBatchDetail?.cases?.find((c) => c.id === caseId);
+    if (inCurrent) {
+      setSelectedBatchCase(inCurrent);
+      return;
+    }
+    const owner = agencyApplications.find((a) => a.id === caseId)?.intakeBatch;
+    if (!owner) return;
+    setIsLoading(true);
+    try {
+      const detail = await fetchAgencyUploadBatchDetail(owner);
+      const normalized = normalizeAgencyUploadBatch(
+        detail, agencyUploadBatches.find((b) => b.id === owner) ?? null);
+      setAgencyBatchId(owner);
+      setAgencyUploadBatchDetail(normalized);
+      upsertAgencyUploadBatch(normalized);
+      const found = normalized.cases?.find((c) => c.id === caseId);
+      if (found) setSelectedBatchCase(found);
     } catch (exception) {
       setRuntimeError(exception.message);
     } finally {
@@ -5536,22 +5785,25 @@ export default function App() {
         && c.studentName && c.studentName.toUpperCase() !== "UNKNOWN"
         && c.status !== "COMPLETED";
       // 업로드 상세 "검토 필요" 섹션과 동일한 티어 정렬 → "검토 n/N" 순서 일치
-      const reviewQueue = (selectedAgencyBatch.cases || [])
+      const batchQueue = (selectedAgencyBatch.cases || [])
         .filter(_needsReview)
         .sort((a, b) => caseReviewTier(a) - caseReviewTier(b))
         .map((c) => c.id);
+      // 보완 접수 등 다른 목록에서 들어왔으면 그 목록이 기준(어디서 어디로 갔는지 유지).
+      const fromContext = reviewContext?.ids?.includes(selectedBatchCase.id);
+      const reviewQueue = fromContext ? reviewContext.ids : batchQueue;
+      const queueLabel = fromContext ? reviewContext.label : "업로드 배치";
       return (
         <BatchCaseDetailPage
           key={selectedBatchCase.id} // 케이스 전환(다음 검토 등) 시 내부 상태(선택 서류·편집 폼) 전부 초기화
           caseData={selectedBatchCase}
           batchId={selectedAgencyBatch.id}
+          batchName={selectedAgencyBatch.displayName || selectedAgencyBatch.fileName}
           reviewQueue={reviewQueue}
-          onNavigateCase={(id) => {
-            const found = selectedAgencyBatch?.cases?.find((c) => c.id === id);
-            if (found) setSelectedBatchCase(found);
-          }}
+          queueLabel={queueLabel}
+          onNavigateCase={(id) => navigateToCase(id)}
           session={session}
-          onBack={() => setPage("agency-upload-history-detail")}
+          onBack={() => setPage(fromContext ? "agency-supplement-list" : "agency-upload-history-detail")}
           onRefresh={async () => {
             try {
               const detail = await fetchAgencyUploadBatchDetail(selectedAgencyBatch.id);

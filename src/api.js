@@ -259,6 +259,17 @@ export async function fetchAgencyApplicationDetail(caseId) {
   });
 }
 
+/**
+ * 검토 화면 위치 정보 — 목록과 같은 필터를 넘겨야 "n/N"이 목록과 일치한다.
+ * @returns {Promise<{index:number,total:number,prevId:?string,prevName:?string,nextId:?string,nextName:?string}>}
+ */
+export async function fetchAgencyCaseNavigation(caseId, params = {}) {
+  return request(
+    `/agency/application-cases/${encodeURIComponent(caseId)}/navigation${buildQuery(params)}`,
+    { fallbackMessage: "Failed to load case navigation" },
+  );
+}
+
 export async function fetchAgencyUploadBatches() {
   return request("/agency/upload-batches", {
     fallbackMessage: "Failed to load upload batches",
