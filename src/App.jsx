@@ -47,6 +47,7 @@ import {
 } from "./api.js";
 import { getRefreshToken } from "./auth/tokenStore.js";
 import { formatStudentName, formatAlienRegistrationNumber } from "./lib/studentFormat.js";
+import { useUrlPagination, useUrlState } from "./lib/useUrlState.js";
 
 const ROLE_LABELS = {
   student: "학생",
@@ -2688,12 +2689,13 @@ function isExtractionFailed(app) {
 }
 
 function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
-  const [nameFilter, setNameFilter] = useState("");
-  const [nationalityFilter, setNationalityFilter] = useState(ALL_FILTER);
-  const [visaFilter, setVisaFilter] = useState(ALL_FILTER);
-  const [schoolFilter, setSchoolFilter] = useState(ALL_FILTER);
-  const [statusFilter, setStatusFilter] = useState(ALL_FILTER);
-  const [batchFilter, setBatchFilter] = useState(ALL_FILTER);
+  // 필터·페이지는 URL(?name=..&batch=..&page=2)에 — 새로고침·뒤로가기·링크 공유에서 살아남는다.
+  const [nameFilter, setNameFilter] = useUrlState("name", "");
+  const [nationalityFilter, setNationalityFilter] = useUrlState("nationality", ALL_FILTER);
+  const [visaFilter, setVisaFilter] = useUrlState("visa", ALL_FILTER);
+  const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
+  const [statusFilter, setStatusFilter] = useUrlState("status", ALL_FILTER);
+  const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
   const [excludingId, setExcludingId] = useState(null);
 
   // 학생 목록 = 검토 완료('완료')된 학생만. 검토 필요/보완 중인 케이스는 업로드 상세·보완접수에서
@@ -2732,9 +2734,8 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
     });
   }, [applications, nameFilter, nationalityFilter, visaFilter, schoolFilter, statusFilter, batchFilter]);
 
-  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${statusFilter}|${batchFilter}`;
   const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedRows } =
-    usePagination(rows, 15, filterKey);
+    useUrlPagination(rows, 15);
 
   async function handleExclude(application) {
     if (excludingId) return;
@@ -2887,13 +2888,13 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
 }
 
 function AgencySupplementListPage({ applications, onSupplementRequest }) {
-  // 다중 독립 필터(모두 AND) — 학생목록과 같은 구조
-  const [nameFilter, setNameFilter] = useState("");
-  const [nationalityFilter, setNationalityFilter] = useState(ALL_FILTER);
-  const [visaFilter, setVisaFilter] = useState(ALL_FILTER);
-  const [schoolFilter, setSchoolFilter] = useState(ALL_FILTER);
-  const [batchFilter, setBatchFilter] = useState(ALL_FILTER);
-  const [missingFilter, setMissingFilter] = useState(ALL_FILTER); // 누락 서류 건수 구간
+  // 다중 독립 필터(모두 AND) — 학생목록과 같은 구조. 상태는 URL query string에 둔다.
+  const [nameFilter, setNameFilter] = useUrlState("name", "");
+  const [nationalityFilter, setNationalityFilter] = useUrlState("nationality", ALL_FILTER);
+  const [visaFilter, setVisaFilter] = useUrlState("visa", ALL_FILTER);
+  const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
+  const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
+  const [missingFilter, setMissingFilter] = useUrlState("missing", ALL_FILTER); // 누락 서류 건수 구간
 
   // 이 화면 대상 = 누락 있음(미완료) + 추출 실패. 옵션은 이 모수에서만 뽑아 빈 옵션을 막는다.
   const targetApps = useMemo(
@@ -4968,10 +4969,11 @@ export default function App() {
   const [agencyApplicationDetail, setAgencyApplicationDetail] = useState(null);
   const [agencyUploadBatches, setAgencyUploadBatches] = useState([]);
   const [agencyUploadBatchDetail, setAgencyUploadBatchDetail] = useState(null);
-  const [schoolSearch, setSchoolSearch] = useState("");
-  const [schoolSearchField, setSchoolSearchField] = useState("name");
-  const [schoolStatusFilter, setSchoolStatusFilter] = useState(ALL_FILTER);
-  const [schoolVisaFilter, setSchoolVisaFilter] = useState(ALL_FILTER);
+  // 학교 화면 목록 필터도 URL에 (학생 목록·보완 접수와 같은 원칙)
+  const [schoolSearch, setSchoolSearch] = useUrlState("q", "");
+  const [schoolSearchField, setSchoolSearchField] = useUrlState("field", "name");
+  const [schoolStatusFilter, setSchoolStatusFilter] = useUrlState("status", ALL_FILTER);
+  const [schoolVisaFilter, setSchoolVisaFilter] = useUrlState("visa", ALL_FILTER);
   const [agencySearch, setAgencySearch] = useState("");
   const [agencySearchField, setAgencySearchField] = useState("studentName");
   const [agencyStatusFilter, setAgencyStatusFilter] = useState(ALL_FILTER);
