@@ -83,6 +83,15 @@ const NAV_ITEMS = {
   ],
 };
 
+/** 페이지 id → 사람이 읽는 화면 이름. "돌아가기" 버튼 문구를 출발지에 맞추는 데 쓴다. */
+const PAGE_LABELS = Object.fromEntries(
+  Object.values(NAV_ITEMS).flat().map((item) => [item.page, item.label]),
+);
+
+export function pageLabel(page, fallback = "목록") {
+  return PAGE_LABELS[page] ?? fallback;
+}
+
 const SCHOOL_SEARCH_OPTIONS = [
   { value: "name", label: "학생명" },
   { value: "nationality", label: "국적" },
@@ -1938,7 +1947,7 @@ const CASE_STATUS_OPTIONS = [
   { key: "REJECTED", label: "반려" },
 ];
 
-function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onBack, session, onStatusChange, onNoteChange }) {
+function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onBack, backLabel = "목록", session, onStatusChange, onNoteChange }) {
   const [selectedStatusKey, setSelectedStatusKey] = useState(application.statusKey ?? CASE_STATUS_OPTIONS[0].key);
   const [statusChanging, setStatusChanging] = useState(false);
   const [noteText, setNoteText] = useState(selectedDocument.note ?? "");
@@ -2037,12 +2046,12 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
   return (
     <>
       <PageHeader
-        breadcrumb="유학원 / 신청 상세"
+        breadcrumb={`유학원 / ${backLabel} / 신청 상세`}
         title={`${formatStudentName(application.studentName)} · ${application.visaType}`}
         description={`${application.schoolName} · ${application.applicationType} · 담당 ${application.coordinator} · 최근 제출일 ${selectedDocument.submittedAt || "—"}`}
         actions={
           <button type="button" className="secondaryButton" onClick={onBack}>
-            대시보드로 돌아가기
+            ← {backLabel}(으)로 돌아가기
           </button>
         }
       />
@@ -5231,7 +5240,11 @@ export default function App() {
     });
   }
 
-  async function openAgencyApplicationDetail(applicationId, nextSession = session, returnPage = "agency-dashboard") {
+  /**
+   * 케이스 상세 열기. returnPage 를 명시하지 않으면 "지금 보고 있던 화면"으로 돌아간다.
+   * (기존엔 대시보드로 고정돼 있어, 학생목록에서 열어도 대시보드로 튕겼다.)
+   */
+  async function openAgencyApplicationDetail(applicationId, nextSession = session, returnPage = null) {
     if (!nextSession?.isAuthenticated) {
       return;
     }
@@ -5245,7 +5258,10 @@ export default function App() {
       setAgencyApplicationId(applicationId);
       setAgencyApplicationDetail(detail);
       setAgencyPreviewId(detail.documents[0]?.code ?? null);
-      setAgencyDetailReturnPage(returnPage);
+      // 상세에서 상세로 이동하는 경우엔 원래 출발지를 유지(뒤로가기가 제자리를 돌지 않게)
+      setAgencyDetailReturnPage(
+        returnPage ?? (page === "agency-detail" ? agencyDetailReturnPage : page),
+      );
       setPage("agency-detail");
     } catch (exception) {
       setRuntimeError(exception.message);
@@ -5713,6 +5729,7 @@ export default function App() {
           selectedDocument={selectedAgencyDocument}
           onSelectDocument={setAgencyPreviewId}
           onBack={() => setPage(agencyDetailReturnPage)}
+          backLabel={pageLabel(agencyDetailReturnPage)}
           session={session}
           onStatusChange={(result) => {
             setAgencyApplicationDetail((current) =>
