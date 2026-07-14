@@ -40,6 +40,32 @@ export function useUrlState(key, defaultValue = "") {
   return [value, setValue];
 }
 
+/**
+ * 여러 필터를 한 번의 이동으로 비운다.
+ *
+ * useUrlState 의 개별 setter 를 연달아 호출하면 안 된다 — 각 updater 는 아직 갱신되지 않은
+ * 같은 URL을 받기 때문에 마지막 호출만 반영되고 나머지 필터가 남는다.
+ */
+export function useUrlReset(keys) {
+  const [, setSearchParams] = useSearchParams();
+  const keySignature = keys.join(",");
+
+  return useCallback(
+    () => {
+      setSearchParams(
+        (current) => {
+          const params = new URLSearchParams(current);
+          keySignature.split(",").forEach((key) => params.delete(key));
+          params.delete("page");
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [keySignature, setSearchParams],
+  );
+}
+
 /** usePagination 과 같은 모양이지만 현재 페이지를 URL(?page=)에 둔다. */
 export function useUrlPagination(items, pageSize) {
   const [rawPage, setRawPage] = useUrlState("page", "1");

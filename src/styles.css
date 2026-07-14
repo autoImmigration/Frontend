@@ -568,6 +568,164 @@ select:focus {
   background: var(--surface-muted);
 }
 
+/* 목록 필터 바 — 검색 한 줄 + 균등 그리드 셀렉트 + 적용된 조건 칩.
+   폭이 제각각인 필드를 flex-wrap 으로 늘어놓던 .toolbarRow 를 대체한다. */
+.filterBar {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.filterBarTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filterSearch {
+  position: relative;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.filterSearch input {
+  padding-left: 40px;
+}
+
+.filterSearch input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.filterSearchIcon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--text-soft);
+  pointer-events: none;
+}
+
+.filterBarMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.filterBarMeta strong {
+  font-size: 14px;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.filterReset {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.filterReset:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.filterReset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
+}
+
+.filterField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.filterField > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+/* 걸려 있는 필터는 훑기만 해도 보이게 */
+.filterField select.isActive {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.filterChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.filterChip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterChip:hover {
+  background: #dbeafe;
+}
+
+.filterChipX {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.filterChip:hover .filterChipX {
+  opacity: 1;
+}
+
 .sectionMeta {
   display: flex;
   align-items: center;

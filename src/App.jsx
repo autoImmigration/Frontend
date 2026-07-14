@@ -47,7 +47,7 @@ import {
 } from "./api.js";
 import { getRefreshToken } from "./auth/tokenStore.js";
 import { formatStudentName, formatAlienRegistrationNumber } from "./lib/studentFormat.js";
-import { useUrlPagination, useUrlState } from "./lib/useUrlState.js";
+import { useUrlPagination, useUrlReset, useUrlState } from "./lib/useUrlState.js";
 
 const ROLE_LABELS = {
   student: "학생",
@@ -2708,6 +2708,111 @@ function isExtractionFailed(app) {
   return !app.studentName || app.studentName.toUpperCase() === "UNKNOWN";
 }
 
+/**
+ * 목록 상단 필터 바 — 학생 목록·보완 접수 공용.
+ *
+ * DESIGN.md 안티패턴 "표 위에 검색 조건이 흩어져 있는 형태"를 피한다.
+ * 예전엔 flex-wrap 에 폭이 제각각인 필드를 늘어놓아 줄바꿈이 들쭉날쭉했고,
+ * 필터를 6개까지 걸어도 "지금 뭐가 걸려 있는지" 한눈에 안 보였다.
+ *
+ * - 검색은 한 줄로 분리(가장 자주 쓰는 입력)
+ * - 셀렉트는 균등 그리드 → 어느 폭에서도 열이 어긋나지 않는다
+ * - 적용된 조건은 칩으로 보여주고 칩에서 바로 해제한다
+ * - 걸려 있는 셀렉트는 파랗게 표시해 훑기만 해도 보인다
+ *
+ * filters: [{ key, label, value, onChange, options: [{ value, label }] }]
+ */
+function FilterBar({ search, filters = [], onReset, resultLabel }) {
+  const activeFilters = filters.filter((filter) => filter.value !== ALL_FILTER);
+  const searchText = search?.value?.trim() ?? "";
+  const activeCount = activeFilters.length + (searchText ? 1 : 0);
+
+  const optionLabel = (filter) =>
+    filter.options.find((option) => option.value === filter.value)?.label ?? filter.value;
+
+  return (
+    <div className="filterBar">
+      <div className="filterBarTop">
+        {search && (
+          <div className="filterSearch">
+            <svg className="filterSearchIcon" viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path d="M13.5 13.5 L17 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <input
+              type="search"
+              value={search.value}
+              onChange={(event) => search.onChange(event.target.value)}
+              placeholder={search.placeholder}
+              aria-label={search.label}
+            />
+          </div>
+        )}
+        <div className="filterBarMeta">
+          {resultLabel && <strong>{resultLabel}</strong>}
+          <button
+            type="button"
+            className="filterReset"
+            onClick={onReset}
+            disabled={activeCount === 0}
+          >
+            필터 초기화{activeCount > 0 ? ` (${activeCount})` : ""}
+          </button>
+        </div>
+      </div>
+
+      <div className="filterGrid">
+        {filters.map((filter) => (
+          <label key={filter.key} className="filterField">
+            <span>{filter.label}</span>
+            <select
+              className={filter.value === ALL_FILTER ? "" : "isActive"}
+              value={filter.value}
+              onChange={(event) => filter.onChange(event.target.value)}
+            >
+              <option value={ALL_FILTER}>전체</option>
+              {filter.options.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      {activeCount > 0 && (
+        <div className="filterChips">
+          {searchText && (
+            <button type="button" className="filterChip" onClick={() => search.onChange("")}>
+              <span>{search.label}: {searchText}</span>
+              <span className="filterChipX" aria-hidden="true">×</span>
+            </button>
+          )}
+          {activeFilters.map((filter) => (
+            <button
+              key={filter.key}
+              type="button"
+              className="filterChip"
+              onClick={() => filter.onChange(ALL_FILTER)}
+            >
+              <span>{filter.label}: {optionLabel(filter)}</span>
+              <span className="filterChipX" aria-hidden="true">×</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 값 배열 → FilterBar 가 쓰는 옵션 배열. */
+function toOptions(values) {
+  return values.map((value) => ({ value, label: value }));
+}
+
+// 초기화 시 한 번에 지울 URL 파라미터 (모듈 상수 — 렌더마다 새 배열을 만들지 않는다)
+const STUDENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "status", "batch"];
+const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "missing", "batch"];
+
 function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   // 필터·페이지는 URL(?name=..&batch=..&page=2)에 — 새로고침·뒤로가기·링크 공유에서 살아남는다.
   const [nameFilter, setNameFilter] = useUrlState("name", "");
@@ -2716,6 +2821,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
   const [statusFilter, setStatusFilter] = useUrlState("status", ALL_FILTER);
   const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
+  const resetFilters = useUrlReset(STUDENT_FILTER_KEYS);
   const [excludingId, setExcludingId] = useState(null);
 
   // 학생 목록 = 검토 완료('완료')된 학생만. 검토 필요/보완 중인 케이스는 업로드 상세·보완접수에서
@@ -2779,65 +2885,23 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
       />
 
       <section className="surfaceCard">
-        <div className="toolbarRow">
-          <label className="field fieldGrow">
-            <span>학생명</span>
-            <input
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              placeholder="학생명으로 검색"
-            />
-          </label>
-
-          <label className="field fieldCompact">
-            <span>국적</span>
-            <select value={nationalityFilter} onChange={(e) => setNationalityFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {nationalityOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>비자 타입</span>
-            <select value={visaFilter} onChange={(e) => setVisaFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {visaOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>학교</span>
-            <select value={schoolFilter} onChange={(e) => setSchoolFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {schoolOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>상태</span>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              <option value="보완">보완</option>
-              <option value="완료">완료</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>업로드 배치</span>
-            <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {batchOptionsList.map((b) => (
-                <option key={b.id} value={b.id}>{b.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <FilterBar
+          search={{
+            label: "학생명",
+            value: nameFilter,
+            onChange: setNameFilter,
+            placeholder: "학생명으로 검색",
+          }}
+          resultLabel={`${rows.length}명`}
+          onReset={resetFilters}
+          filters={[
+            { key: "nationality", label: "국적", value: nationalityFilter, onChange: setNationalityFilter, options: toOptions(nationalityOptionsList) },
+            { key: "visa", label: "비자 타입", value: visaFilter, onChange: setVisaFilter, options: toOptions(visaOptionsList) },
+            { key: "school", label: "학교", value: schoolFilter, onChange: setSchoolFilter, options: toOptions(schoolOptionsList) },
+            { key: "status", label: "상태", value: statusFilter, onChange: setStatusFilter, options: toOptions(["보완", "완료"]) },
+            { key: "batch", label: "업로드 배치", value: batchFilter, onChange: setBatchFilter, options: batchOptionsList.map((b) => ({ value: b.id, label: b.label })) },
+          ]}
+        />
 
         <SectionMeta count={`${rows.length}명`} helper={totalPages > 1 ? `${currentPage} / ${totalPages} 페이지` : undefined} />
 
@@ -2915,6 +2979,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
   const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
   const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
   const [missingFilter, setMissingFilter] = useUrlState("missing", ALL_FILTER); // 누락 서류 건수 구간
+  const resetFilters = useUrlReset(SUPPLEMENT_FILTER_KEYS);
 
   // 이 화면 대상 = 누락 있음(미완료) + 추출 실패. 옵션은 이 모수에서만 뽑아 빈 옵션을 막는다.
   const targetApps = useMemo(
@@ -3041,66 +3106,30 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
       />
 
       <section className="surfaceCard">
-        <div className="toolbarRow">
-          <label className="field fieldGrow">
-            <span>학생명</span>
-            <input
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              placeholder="학생명으로 검색"
-            />
-          </label>
-
-          <label className="field fieldCompact">
-            <span>국적</span>
-            <select value={nationalityFilter} onChange={(e) => setNationalityFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {nationalityOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>비자 타입</span>
-            <select value={visaFilter} onChange={(e) => setVisaFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {visaOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>학교</span>
-            <select value={schoolFilter} onChange={(e) => setSchoolFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {schoolOptionsList.map((option) => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field fieldCompact">
-            <span>누락 서류</span>
-            <select value={missingFilter} onChange={(e) => setMissingFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              <option value="1-2">1~2건</option>
-              <option value="3-5">3~5건</option>
-              <option value="6+">6건 이상</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>업로드 배치</span>
-            <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
-              <option value={ALL_FILTER}>전체</option>
-              {batchOptions.map((b) => (
-                <option key={b.id} value={b.id}>{b.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <FilterBar
+          search={{
+            label: "학생명",
+            value: nameFilter,
+            onChange: setNameFilter,
+            placeholder: "학생명으로 검색 (추출 실패 건은 이름이 없어 제외됩니다)",
+          }}
+          resultLabel={`${supplementStudents.length + failedStudents.length}명`}
+          onReset={resetFilters}
+          filters={[
+            { key: "nationality", label: "국적", value: nationalityFilter, onChange: setNationalityFilter, options: toOptions(nationalityOptionsList) },
+            { key: "visa", label: "비자 타입", value: visaFilter, onChange: setVisaFilter, options: toOptions(visaOptionsList) },
+            { key: "school", label: "학교", value: schoolFilter, onChange: setSchoolFilter, options: toOptions(schoolOptionsList) },
+            {
+              key: "missing", label: "누락 서류", value: missingFilter, onChange: setMissingFilter,
+              options: [
+                { value: "1-2", label: "1~2건" },
+                { value: "3-5", label: "3~5건" },
+                { value: "6+", label: "6건 이상" },
+              ],
+            },
+            { key: "batch", label: "업로드 배치", value: batchFilter, onChange: setBatchFilter, options: batchOptions.map((b) => ({ value: b.id, label: b.label })) },
+          ]}
+        />
       </section>
 
       {supplementStudents.length > 0 && (
