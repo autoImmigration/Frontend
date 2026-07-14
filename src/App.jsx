@@ -1724,30 +1724,27 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
           <div className="tableWrap">
             <table className="dataTable stackedTable">
               <thead>
+                {/* 예전엔 날짜가 세 번 나왔다: '접수일'(실은 업로드 일시) + '배치'(displayName 에 또 일시)
+                    + '비고'("접수일: yyyy-mm-dd"). 열 이름을 실제 값에 맞추고 중복을 걷어냈다. */}
                 <tr>
-                  <th>접수일</th>
-                  <th>배치</th>
+                  <th>업로드 일시</th>
+                  <th>ZIP 파일</th>
                   <th>학교명</th>
                   <th>학생 수</th>
                   <th>상태</th>
-                  <th>비고</th>
+                  <th>접수일</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {pagedBatches.map((batch) => (
                   <tr key={batch.id}>
-                    <td data-label="접수일">{batch.uploadedAt}</td>
-                    <td data-label="배치">
-                      {batch.displayName || batch.fileName}
-                      <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
-                        {batch.fileName}
-                      </span>
-                    </td>
+                    <td data-label="업로드 일시">{batch.uploadedAt}</td>
+                    <td data-label="ZIP 파일">{batch.fileName || "—"}</td>
                     <td data-label="학교명">{batch.schoolName ?? "—"}</td>
                     <td data-label="학생 수">{batch.studentCount == null ? "—" : `${batch.studentCount}명`}</td>
                     <td data-label="상태"><StatusBadge value={batch.status} /></td>
-                    <td data-label="비고">{batch.note}</td>
+                    <td data-label="접수일">{receiptDateOf(batch) || "—"}</td>
                     <td data-label="작업" className="tableActionCell">
                       <button
                         type="button"
@@ -2723,12 +2720,19 @@ function isExtractionFailed(app) {
  * filters: [{ key, label, value, onChange, options: [{ value, label }] }]
  */
 function FilterBar({ search, filters = [], onReset, resultLabel }) {
-  const activeFilters = filters.filter((filter) => filter.value !== ALL_FILTER);
+  // 날짜 필터는 "미지정"이 빈 문자열, 셀렉트는 "전체"
+  const isActive = (filter) =>
+    filter.type === "date" ? Boolean(filter.value) : filter.value !== ALL_FILTER;
+  const clearedValue = (filter) => (filter.type === "date" ? "" : ALL_FILTER);
+
+  const activeFilters = filters.filter(isActive);
   const searchText = search?.value?.trim() ?? "";
   const activeCount = activeFilters.length + (searchText ? 1 : 0);
 
   const optionLabel = (filter) =>
-    filter.options.find((option) => option.value === filter.value)?.label ?? filter.value;
+    filter.type === "date"
+      ? filter.value
+      : filter.options.find((option) => option.value === filter.value)?.label ?? filter.value;
 
   return (
     <div className="filterBar">
@@ -2765,16 +2769,27 @@ function FilterBar({ search, filters = [], onReset, resultLabel }) {
         {filters.map((filter) => (
           <label key={filter.key} className="filterField">
             <span>{filter.label}</span>
-            <select
-              className={filter.value === ALL_FILTER ? "" : "isActive"}
-              value={filter.value}
-              onChange={(event) => filter.onChange(event.target.value)}
-            >
-              <option value={ALL_FILTER}>전체</option>
-              {filter.options.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            {filter.type === "date" ? (
+              <input
+                type="date"
+                className={isActive(filter) ? "isActive" : ""}
+                value={filter.value}
+                min={filter.min}
+                max={filter.max}
+                onChange={(event) => filter.onChange(event.target.value)}
+              />
+            ) : (
+              <select
+                className={isActive(filter) ? "isActive" : ""}
+                value={filter.value}
+                onChange={(event) => filter.onChange(event.target.value)}
+              >
+                <option value={ALL_FILTER}>전체</option>
+                {filter.options.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            )}
           </label>
         ))}
       </div>
@@ -2792,7 +2807,7 @@ function FilterBar({ search, filters = [], onReset, resultLabel }) {
               key={filter.key}
               type="button"
               className="filterChip"
-              onClick={() => filter.onChange(ALL_FILTER)}
+              onClick={() => filter.onChange(clearedValue(filter))}
             >
               <span>{filter.label}: {optionLabel(filter)}</span>
               <span className="filterChipX" aria-hidden="true">×</span>
@@ -2809,9 +2824,30 @@ function toOptions(values) {
   return values.map((value) => ({ value, label: value }));
 }
 
+/**
+ * 화면에 쓰이는 여러 날짜 표기("2026.07.11 15:19", "2026-07-11", ISO)에서 날짜만 뽑아
+ * <input type="date"> 와 같은 "YYYY-MM-DD" 로 맞춘다. 못 읽으면 빈 문자열.
+ */
+function toDateKey(value) {
+  if (!value) return "";
+  const matched = String(value).match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
+  if (!matched) return "";
+  const [, year, month, day] = matched;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+/**
+ * 배치의 접수일. 업로드할 때 운영자가 입력한 값이며 note 에 "접수일: 2026-07-11" 형태로 들어간다.
+ * 업로드 일시(uploadedAt)와는 다른 값이다 — 어제 접수분을 오늘 올릴 수 있다.
+ */
+function receiptDateOf(batch) {
+  return toDateKey(batch?.note) || "";
+}
+
 // 초기화 시 한 번에 지울 URL 파라미터 (모듈 상수 — 렌더마다 새 배열을 만들지 않는다)
-const STUDENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "status", "batch"];
-const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "missing", "batch"];
+// 학생 목록은 '완료'된 케이스만 보여주므로 상태 필터는 두지 않는다 (선택지가 하나뿐이라 의미가 없다)
+const STUDENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "date"];
+const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "missing", "date"];
 
 function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   // 필터·페이지는 URL(?name=..&batch=..&page=2)에 — 새로고침·뒤로가기·링크 공유에서 살아남는다.
@@ -2819,8 +2855,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   const [nationalityFilter, setNationalityFilter] = useUrlState("nationality", ALL_FILTER);
   const [visaFilter, setVisaFilter] = useUrlState("visa", ALL_FILTER);
   const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
-  const [statusFilter, setStatusFilter] = useUrlState("status", ALL_FILTER);
-  const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
+  const [dateFilter, setDateFilter] = useUrlState("date", "");
   const resetFilters = useUrlReset(STUDENT_FILTER_KEYS);
   const [excludingId, setExcludingId] = useState(null);
 
@@ -2834,17 +2869,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   const nationalityOptionsList = [...new Set(normalApps.map((a) => a.nationality).filter(Boolean))];
   const visaOptionsList = [...new Set(normalApps.map((a) => a.visaType).filter(Boolean))];
   const schoolOptionsList = [...new Set(normalApps.map((a) => a.schoolName).filter(Boolean))];
-  // 업로드 배치 옵션 — id로 필터하되 표시는 원본 zip 파일명
-  const batchOptionsList = useMemo(() => {
-    const seen = new Map();
-    normalApps.forEach((a) => {
-      if (a.intakeBatch && !seen.has(a.intakeBatch)) {
-        seen.set(a.intakeBatch, a.intakeBatchName || a.intakeBatch);
-      }
-    });
-    return [...seen.entries()].map(([id, label]) => ({ id, label }));
-  }, [applications]);
-
+  // 배치 id 대신 업로드 날짜로 고른다 — 운영자가 배치를 떠올리는 기준은 "언제 올렸는지"다.
   // 다중 독립 필터 — 모두 AND. 백엔드 정렬(배치 순서 + 배치 내 순서)을 보존한다.
   const rows = useMemo(() => {
     const nameQuery = nameFilter.trim().toLowerCase();
@@ -2854,11 +2879,10 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
         nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter;
       const matchesVisa = visaFilter === ALL_FILTER || a.visaType === visaFilter;
       const matchesSchool = schoolFilter === ALL_FILTER || a.schoolName === schoolFilter;
-      const matchesStatus = statusFilter === ALL_FILTER || a.status === statusFilter;
-      const matchesBatch = batchFilter === ALL_FILTER || a.intakeBatch === batchFilter;
-      return matchesName && matchesNationality && matchesVisa && matchesSchool && matchesStatus && matchesBatch;
+      const matchesDate = !dateFilter || toDateKey(a.uploadedAt) === dateFilter;
+      return matchesName && matchesNationality && matchesVisa && matchesSchool && matchesDate;
     });
-  }, [applications, nameFilter, nationalityFilter, visaFilter, schoolFilter, statusFilter, batchFilter]);
+  }, [applications, nameFilter, nationalityFilter, visaFilter, schoolFilter, dateFilter]);
 
   const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedRows } =
     useUrlPagination(rows, 15);
@@ -2898,8 +2922,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
             { key: "nationality", label: "국적", value: nationalityFilter, onChange: setNationalityFilter, options: toOptions(nationalityOptionsList) },
             { key: "visa", label: "비자 타입", value: visaFilter, onChange: setVisaFilter, options: toOptions(visaOptionsList) },
             { key: "school", label: "학교", value: schoolFilter, onChange: setSchoolFilter, options: toOptions(schoolOptionsList) },
-            { key: "status", label: "상태", value: statusFilter, onChange: setStatusFilter, options: toOptions(["보완", "완료"]) },
-            { key: "batch", label: "업로드 배치", value: batchFilter, onChange: setBatchFilter, options: batchOptionsList.map((b) => ({ value: b.id, label: b.label })) },
+            { key: "date", label: "업로드 날짜", type: "date", value: dateFilter, onChange: setDateFilter },
           ]}
         />
 
@@ -2917,7 +2940,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                   <th>외국인등록번호</th>
                   <th>학교명</th>
                   <th>비자 타입</th>
-                  <th>업로드 배치</th>
+                  <th>업로드 날짜</th>
                   <th>상태</th>
                   <th />
                 </tr>
@@ -2932,12 +2955,12 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                     </td>
                     <td data-label="학교명">{a.schoolName}</td>
                     <td data-label="비자 타입">{a.visaType}</td>
-                    <td data-label="업로드 배치">
-                      {a.intakeBatchName || "—"}
-                      <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
-                        {a.uploadedAt || a.applicationDate || "—"}
-                        {a.batchOrderIndex ? ` · ${a.batchOrderIndex}번` : ""}
-                      </span>
+                    {/* 배치명(비자타입 · 일시)은 옆 '비자 타입' 열과 겹쳐 중복이었다 → 업로드 일시 + 배치 내 순번만 */}
+                    <td data-label="업로드 날짜">
+                      {a.uploadedAt || a.applicationDate || "—"}
+                      {a.batchOrderIndex ? (
+                        <span className="cellMeta">{a.batchOrderIndex}번째 스캔</span>
+                      ) : null}
                     </td>
                     <td data-label="상태">
                       <StatusBadge value={a.status} />
@@ -2977,7 +3000,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
   const [nationalityFilter, setNationalityFilter] = useUrlState("nationality", ALL_FILTER);
   const [visaFilter, setVisaFilter] = useUrlState("visa", ALL_FILTER);
   const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
-  const [batchFilter, setBatchFilter] = useUrlState("batch", ALL_FILTER);
+  const [dateFilter, setDateFilter] = useUrlState("date", "");
   const [missingFilter, setMissingFilter] = useUrlState("missing", ALL_FILTER); // 누락 서류 건수 구간
   const resetFilters = useUrlReset(SUPPLEMENT_FILTER_KEYS);
 
@@ -2992,16 +3015,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
   const nationalityOptionsList = [...new Set(targetApps.map((a) => a.nationality).filter(Boolean))];
   const visaOptionsList = [...new Set(targetApps.map((a) => a.visaType).filter(Boolean))];
   const schoolOptionsList = [...new Set(targetApps.map((a) => a.schoolName).filter(Boolean))];
-  const batchOptions = useMemo(() => {
-    const seen = new Map();
-    targetApps.forEach((a) => {
-      if (a.intakeBatch && !seen.has(a.intakeBatch)) {
-        seen.set(a.intakeBatch, a.intakeBatchName || a.intakeBatch);
-      }
-    });
-    return [...seen.entries()].map(([id, label]) => ({ id, label }));
-  }, [targetApps]);
-
+  // 학생 목록과 같은 원칙 — 배치를 고르는 기준은 "언제 올린 건지"다.
   const matchesFilters = (a) => {
     const nameQuery = nameFilter.trim().toLowerCase();
     const missing = a.missingCount ?? 0;
@@ -3014,11 +3028,11 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
       && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
       && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
       && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
-      && (batchFilter === ALL_FILTER || a.intakeBatch === batchFilter)
+      && (!dateFilter || toDateKey(a.uploadedAt) === dateFilter)
       && matchesMissing;
   };
 
-  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${batchFilter}|${missingFilter}`;
+  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${dateFilter}|${missingFilter}`;
 
   // 관리자가 '완료' 승인한 건은 학생목록으로 가므로 보완목록에서 제외 (학생은 둘 중 한 곳에만)
   const supplementStudents = useMemo(
@@ -3034,7 +3048,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
         && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
         && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
         && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
-        && (batchFilter === ALL_FILTER || a.intakeBatch === batchFilter),
+        && (!dateFilter || toDateKey(a.uploadedAt) === dateFilter),
     )),
     [targetApps, filterKey],
   );
@@ -3050,7 +3064,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
             <th>학생명</th>
             <th>국적</th>
             <th>학교명</th>
-            <th>업로드 배치</th>
+            <th>업로드 날짜</th>
             <th>누락 서류</th>
             <th>최근 상태</th>
             <th>작업</th>
@@ -3064,13 +3078,11 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
               </td>
               <td data-label="국적">{s.nationality || "—"}</td>
               <td data-label="학교명">{s.schoolName}</td>
-              <td data-label="업로드 배치">
-                {s.latestCase?.intakeBatchName || "—"}
-                {s.latestCase?.uploadedAt && (
-                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted,#9ca3af)" }}>
-                    {s.latestCase.uploadedAt}
-                  </span>
-                )}
+              <td data-label="업로드 날짜">
+                {s.latestCase?.uploadedAt || "—"}
+                {s.latestCase?.batchOrderIndex ? (
+                  <span className="cellMeta">{s.latestCase.batchOrderIndex}번째 스캔</span>
+                ) : null}
               </td>
               <td data-label="누락 서류">
                 {isFailed ? "추출 실패" : `${s.latestCase?.missingCount ?? 0}건`}
@@ -3127,7 +3139,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
                 { value: "6+", label: "6건 이상" },
               ],
             },
-            { key: "batch", label: "업로드 배치", value: batchFilter, onChange: setBatchFilter, options: batchOptions.map((b) => ({ value: b.id, label: b.label })) },
+            { key: "date", label: "업로드 날짜", type: "date", value: dateFilter, onChange: setDateFilter },
           ]}
         />
       </section>

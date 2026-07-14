@@ -672,11 +672,33 @@ select:focus {
 }
 
 /* 걸려 있는 필터는 훑기만 해도 보이게 */
-.filterField select.isActive {
+.filterField select.isActive,
+.filterField input.isActive {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--primary);
   font-weight: 600;
+}
+
+.filterField input[type="date"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.filterField input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.filterField input[type="date"]:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+
+/* 표 셀의 보조 정보(순번 등) — 본문보다 작고 조용하게 */
+.cellMeta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .filterChips {
