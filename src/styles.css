@@ -795,7 +795,9 @@ select:focus {
 
 .agencyDetailThreeSplit {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  /* 체크리스트 칸: 240px 에선 "재학증명서(출석률 포함)" 같은 긴 양식명이 줄바꿈됐다.
+     검수 지적이 붙으면 더 좁아져 두 줄이 되므로 한 줄에 들어가도록 넓힌다. */
+  grid-template-columns: 300px minmax(0, 1fr) 300px;
   gap: 14px;
   align-items: stretch;
   padding-bottom: 40px;
