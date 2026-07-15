@@ -23,6 +23,8 @@ import {
   fetchAgencyUploadBatchDetail,
   fetchAgencyUploadBatches,
   fetchAuthedBlob,
+  fetchStudentBlob,
+  studentCaseImagePath,
   fetchCaseActivities,
   fetchMe,
   fetchOcrProgress,
@@ -1388,7 +1390,85 @@ function StudentListPage({ applications, onOpenDetail, session, onSaveProfile })
   );
 }
 
+/** 학생 본인 스캔 이미지 — 학생 토큰으로 인증해 blob 로 로드. */
+function StudentScanImage({ caseId, filename, alt }) {
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!caseId || !filename) { setFailed(true); return; }
+    let cancelled = false;
+    let objectUrl = null;
+    fetchStudentBlob(studentCaseImagePath(caseId, filename))
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [caseId, filename]);
+
+  if (failed) {
+    return <div style={{ padding: 20, color: "var(--text-muted,#9ca3af)", fontSize: 13 }}>이미지를 불러올 수 없습니다.</div>;
+  }
+  if (!url) {
+    return <div style={{ padding: 20, color: "var(--text-muted,#9ca3af)", fontSize: 13 }}>불러오는 중…</div>;
+  }
+  return <img src={url} alt={alt} style={{ maxWidth: "100%", maxHeight: "76vh", objectFit: "contain", display: "block", margin: "0 auto", borderRadius: 6 }} />;
+}
+
+/** 학생이 자기 서류 스캔을 넘겨보는 라이트박스. */
+function StudentScanViewer({ caseId, doc, onClose }) {
+  const scans = doc?.scans ?? [];
+  const [index, setIndex] = useState(0);
+  const safeIndex = Math.min(index, Math.max(0, scans.length - 1));
+  if (!doc || scans.length === 0) return null;
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "relative", background: "#fff", borderRadius: 14, padding: 20, width: "min(720px, 95vw)", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{doc.name}</h2>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted,#6b7280)" }}>
+              업로드된 스캔 {scans.length}장{scans.length > 1 ? ` · ${safeIndex + 1}/${scans.length}` : ""}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
+        </div>
+        {scans.length > 1 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {scans.map((fn, i) => (
+              <button
+                key={fn}
+                type="button"
+                onClick={() => setIndex(i)}
+                style={{
+                  fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer",
+                  border: `1px solid ${i === safeIndex ? "var(--primary,#2563eb)" : "var(--line,#e5e7eb)"}`,
+                  background: i === safeIndex ? "var(--primary-soft,#eff6ff)" : "#fff",
+                  color: i === safeIndex ? "var(--primary,#2563eb)" : "var(--text-secondary,#374151)",
+                  fontWeight: i === safeIndex ? 600 : 400,
+                }}
+              >
+                {i + 1}장
+              </button>
+            ))}
+          </div>
+        )}
+        <StudentScanImage caseId={caseId} filename={scans[safeIndex]} alt={`${doc.name} ${safeIndex + 1}장`} />
+      </div>
+    </div>
+  );
+}
+
 function StudentDetailPage({ application, session, onBack, onRefreshApplications }) {
+  const [viewerDoc, setViewerDoc] = useState(null);
   const [uploadingDoc, setUploadingDoc] = useState(null);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState("");
@@ -1487,6 +1567,7 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
                 <th>분류</th>
                 <th>제출 상태</th>
                 <th>마지막 업로드</th>
+                <th>제출본</th>
                 <th>업로드</th>
               </tr>
             </thead>
@@ -1506,6 +1587,19 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
                     <StatusBadge value={document.status} />
                   </td>
                   <td data-label="마지막 업로드">{document.submittedAt && document.submittedAt !== "-" ? document.submittedAt : "-"}</td>
+                  <td data-label="제출본">
+                    {document.scans && document.scans.length > 0 ? (
+                      <button
+                        type="button"
+                        className="tableLinkButton"
+                        onClick={() => setViewerDoc(document)}
+                      >
+                        보기{document.scans.length > 1 ? ` (${document.scans.length})` : ""}
+                      </button>
+                    ) : (
+                      <span style={{ color: "var(--text-muted,#9ca3af)" }}>-</span>
+                    )}
+                  </td>
                   <td data-label="업로드">
                     {/* 상태와 무관하게 항상 업로드 허용 — 학생이 다른 스캔으로 바꿔 올릴 수 있게.
                         업로드하면 마지막 업로드 날짜가 오늘로 갱신되고, 기존 스캔은 삭제되지 않고 뒤에 추가된다. */}
@@ -1537,6 +1631,14 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
           </table>
         </div>
       </section>
+
+      {viewerDoc && (
+        <StudentScanViewer
+          caseId={application.id}
+          doc={viewerDoc}
+          onClose={() => setViewerDoc(null)}
+        />
+      )}
     </>
   );
 }
