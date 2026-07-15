@@ -477,3 +477,30 @@ export async function downloadOcrResults(batchId) {
     "ocr-results.csv",
   );
 }
+
+/**
+ * 배치의 스캔 이미지를 학생별 폴더로 묶은 ZIP 다운로드.
+ * 파일이 하나도 없으면(204) 다운로드를 시작하지 않고 false 를 반환한다.
+ */
+export async function downloadBatchFiles(batchId, filename) {
+  const path = `/agency/export/batches/${encodeURIComponent(batchId)}/files`;
+  const response = await rawFetch(path, {}, "bearer");
+  if (response.status === 401) {
+    const newToken = await refreshOnce();
+    if (newToken) return downloadBatchFiles(batchId, filename);
+  }
+  if (response.status === 204) return false;
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "파일 다운로드에 실패했습니다."));
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || `${batchId}-files.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return true;
+}

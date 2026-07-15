@@ -13,6 +13,7 @@ import {
   zipRules,
 } from "./mockData.js";
 import {
+  downloadBatchFiles,
   downloadGroupPayment,
   downloadOcrResults,
   excludeAgencyCase,
@@ -2399,8 +2400,24 @@ function AgencyFileListPage({ batches, session }) {
   const [editValue, setEditValue] = useState("");
   const [savingKey, setSavingKey] = useState(null);
   const [saveError, setSaveError] = useState("");
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const { currentPage: batchPage, setCurrentPage: setBatchPage, totalPages: batchTotalPages, paginatedItems: pagedBatchFolders } = usePagination(batches, 20);
+
+  async function handleDownloadBatchZip() {
+    if (downloadingZip || !selectedBatch) return;
+    setLoadError("");
+    setDownloadingZip(true);
+    try {
+      const label = selectedBatch.displayName || selectedBatch.fileName || selectedBatch.id;
+      const ok = await downloadBatchFiles(selectedBatch.id, `${label}.zip`);
+      if (!ok) setLoadError("다운로드할 스캔 파일이 없습니다.");
+    } catch (err) {
+      setLoadError(err.message);
+    } finally {
+      setDownloadingZip(false);
+    }
+  }
 
   useEffect(() => {
     if (!lightboxDoc) return;
@@ -2550,12 +2567,23 @@ function AgencyFileListPage({ batches, session }) {
 
       {level === 1 && selectedBatch && (
         <section className="surfaceCard">
-          <div className="sectionHeading">
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button type="button" className="secondaryButton" onClick={handleBack} style={{ fontSize: "0.8rem", padding: "4px 10px" }}>← 뒤로</button>
-              <h2>학생 폴더</h2>
+          <div className="sectionHeading" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button type="button" className="secondaryButton" onClick={handleBack} style={{ fontSize: "0.8rem", padding: "4px 10px" }}>← 뒤로</button>
+                <h2>학생 폴더</h2>
+              </div>
+              <p>{selectedBatch.displayName || selectedBatch.fileName} 케이스의 학생 목록입니다.</p>
             </div>
-            <p>{selectedBatch.displayName || selectedBatch.fileName} 케이스의 학생 목록입니다.</p>
+            <button
+              type="button"
+              className="primaryButton"
+              onClick={handleDownloadBatchZip}
+              disabled={downloadingZip || !selectedBatch.cases || selectedBatch.cases.length === 0}
+              style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+            >
+              {downloadingZip ? "압축 중…" : "⬇ 학생별 ZIP 다운로드"}
+            </button>
           </div>
           {!selectedBatch.cases || selectedBatch.cases.length === 0 ? (
             <EmptyState title="학생 케이스가 없습니다." description="배치 처리가 완료되면 학생 폴더가 표시됩니다." />
