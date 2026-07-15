@@ -467,7 +467,7 @@ async function downloadBlob(path, filename) {
 export async function downloadGroupPayment(schoolId) {
   await downloadBlob(
     `/agency/export/group-payment${buildQuery({ schoolId })}`,
-    "group-payment.csv",
+    "단체수납입금표.xlsx",
   );
 }
 

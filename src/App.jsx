@@ -1145,13 +1145,16 @@ function formatExtraCount(value, suffix) {
   return suffix ? `${num}${suffix}` : String(num);
 }
 
+// 값이 없는 행("—"/null/빈문자열)은 버린다 — "추출한 항목만" 보여주기 위함.
+const EMPTY_CELL = new Set(["—", "", null, undefined]);
 function ExtraInfoSection({ title, rows }) {
-  // 모든 값이 비어있는 섹션은 헤더만 흐리게, 값은 "—"로 노출(레이아웃 일관성 유지).
+  const filled = rows.filter(([, value]) => !EMPTY_CELL.has(value));
+  if (filled.length === 0) return null; // 전부 비었으면 섹션 자체를 숨긴다
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted,#9ca3af)", letterSpacing: "0.08em" }}>{title}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {rows.map(([label, value]) => (
+        {filled.map(([label, value]) => (
           <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
             <span style={{ color: "var(--text-secondary,#6b7280)", flexShrink: 0 }}>{label}</span>
             <span style={{ textAlign: "right", wordBreak: "break-all", fontVariantNumeric: "tabular-nums" }}>{value}</span>
@@ -1162,9 +1165,44 @@ function ExtraInfoSection({ title, rows }) {
   );
 }
 
-function StudentExtraInfoModal({ extraInfo, studentName, onClose }) {
+/**
+ * 신청 상세보기 모달.
+ * - 기본 정보(이름·국적·여권·주소 등)를 먼저 보여준다 — 추출 부가정보만이 아니라 전체를 한눈에.
+ * - 추출된 값만 노출한다. 값이 없는 행·섹션은 숨긴다(빈 "—" 나열 제거).
+ *
+ * basic: [label, value][] — 각 상세 페이지에서 학생 기본 필드를 넘긴다.
+ */
+function StudentExtraInfoModal({ extraInfo, basic = [], studentName, onClose }) {
   const info = extraInfo ?? {};
-  const hasAny = extraInfo && Object.values(extraInfo).some((v) => v !== null && v !== undefined && v !== "");
+  const basicRows = basic.filter(([, value]) => !EMPTY_CELL.has(value));
+
+  const extraSections = [
+    { title: "학사", rows: [
+      ["직전 학기 성적", formatExtraGpa(info.prevSemesterGpa, info.gpaScale)],
+      ["누적 성적", formatExtraGpa(info.cumulativeGpa, info.gpaScale)],
+      ["학기 수", formatExtraCount(info.semesterCount, "학기")],
+      ["졸업 예정일", formatExtraDate(info.expectedGraduationDate)],
+    ] },
+    { title: "증명서 발급일", rows: [
+      ["재학증명서", formatExtraDate(info.enrollmentIssuedDate)],
+      ["출석증명서", formatExtraDate(info.attendanceIssuedDate)],
+      ["성적증명서", formatExtraDate(info.transcriptIssuedDate)],
+    ] },
+    { title: "은행 잔고", rows: [
+      ["잔고 금액", formatExtraAmount(info.bankBalanceAmount, info.bankBalanceCurrency)],
+      ["발급일", formatExtraDate(info.bankBalanceIssuedDate)],
+      ["예금주", formatExtraText(info.bankAccountHolder)],
+    ] },
+    { title: "부동산 계약", rows: [
+      ["계약 시작일", formatExtraDate(info.leaseStartDate)],
+      ["계약 종료일", formatExtraDate(info.leaseEndDate)],
+      ["임차인", formatExtraText(info.lesseeName)],
+    ] },
+    { title: "출석", rows: [["출석률", formatExtraRate(info.attendanceRate)]] },
+    { title: "외국인등록증", rows: [["뒷면 주소", formatExtraText(info.arcBackAddress)]] },
+  ];
+  // 값이 있는 섹션이 하나라도 있는지 (없으면 안내 문구)
+  const hasExtra = extraSections.some((s) => s.rows.some(([, v]) => !EMPTY_CELL.has(v)));
 
   return (
     <div
@@ -1174,60 +1212,22 @@ function StudentExtraInfoModal({ extraInfo, studentName, onClose }) {
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)" }} />
       <div style={{ position: "relative", background: "#fff", borderRadius: 14, padding: 28, width: "min(560px, 95vw)", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>추가 추출 정보</h2>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>신청 상세 정보</h2>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
         </div>
         <p style={{ margin: "0 0 18px", fontSize: 12, color: "var(--text-muted,#6b7280)" }}>
-          {studentName ? `${formatStudentName(studentName)} · ` : ""}OCR 부가 추출 정보
+          {studentName ? `${formatStudentName(studentName)} · ` : ""}추출된 정보만 표시합니다.
         </p>
 
-        {!hasAny ? (
-          <p style={{ fontSize: 13, color: "var(--text-muted,#9ca3af)", margin: "8px 0" }}>추출된 부가 정보가 없습니다.</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <ExtraInfoSection
-              title="학사"
-              rows={[
-                ["직전 학기 성적", formatExtraGpa(info.prevSemesterGpa, info.gpaScale)],
-                ["누적 성적", formatExtraGpa(info.cumulativeGpa, info.gpaScale)],
-                ["학기 수", formatExtraCount(info.semesterCount, "학기")],
-                ["졸업 예정일", formatExtraDate(info.expectedGraduationDate)],
-              ]}
-            />
-            <ExtraInfoSection
-              title="증명서 발급일"
-              rows={[
-                ["재학증명서", formatExtraDate(info.enrollmentIssuedDate)],
-                ["출석증명서", formatExtraDate(info.attendanceIssuedDate)],
-                ["성적증명서", formatExtraDate(info.transcriptIssuedDate)],
-              ]}
-            />
-            <ExtraInfoSection
-              title="은행 잔고"
-              rows={[
-                ["잔고 금액", formatExtraAmount(info.bankBalanceAmount, info.bankBalanceCurrency)],
-                ["발급일", formatExtraDate(info.bankBalanceIssuedDate)],
-                ["예금주", formatExtraText(info.bankAccountHolder)],
-              ]}
-            />
-            <ExtraInfoSection
-              title="부동산 계약"
-              rows={[
-                ["계약 시작일", formatExtraDate(info.leaseStartDate)],
-                ["계약 종료일", formatExtraDate(info.leaseEndDate)],
-                ["임차인", formatExtraText(info.lesseeName)],
-              ]}
-            />
-            <ExtraInfoSection
-              title="출석"
-              rows={[["출석률", formatExtraRate(info.attendanceRate)]]}
-            />
-            <ExtraInfoSection
-              title="외국인등록증"
-              rows={[["뒷면 주소", formatExtraText(info.arcBackAddress)]]}
-            />
-          </div>
-        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <ExtraInfoSection title="기본 정보" rows={basicRows} />
+          {extraSections.map((section) => (
+            <ExtraInfoSection key={section.title} title={section.title} rows={section.rows} />
+          ))}
+          {!hasExtra && basicRows.length === 0 && (
+            <p style={{ fontSize: 13, color: "var(--text-muted,#9ca3af)", margin: "8px 0" }}>추출된 정보가 없습니다.</p>
+          )}
+        </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 22 }}>
           <button type="button" className="secondaryButton" onClick={onClose}>닫기</button>
@@ -1235,6 +1235,21 @@ function StudentExtraInfoModal({ extraInfo, studentName, onClose }) {
       </div>
     </div>
   );
+}
+
+/** 상세보기 모달에 넘길 기본 정보 행 — application/caseData 공통 필드에서 뽑는다. */
+function basicInfoRows(src) {
+  if (!src) return [];
+  return [
+    ["이름", formatStudentName(src.studentName)],
+    ["국적", src.nationality],
+    ["여권번호", src.passportNumber],
+    ["생년월일", src.birthDate],
+    ["외국인등록번호", formatAlienRegistrationNumber(src.alienRegistrationNumber) || src.alienRegistrationNumber],
+    ["학교", src.schoolName],
+    ["주소", src.address],
+    ["전화번호", src.phoneNumber],
+  ];
 }
 
 function StudentListPage({ applications, onOpenDetail, session, onSaveProfile }) {
@@ -1904,7 +1919,7 @@ function AgencyDownloadPage({ session, schools, batches }) {
         <section className="surfaceCard">
           <div className="sectionHeading">
             <h2>단체수납표 추출</h2>
-            <p>학교별 신청 케이스를 단체수납표 형식으로 내보냅니다.</p>
+            <p>학교별 신청 케이스를 단체수납입금표 양식(엑셀)으로 내보냅니다.</p>
           </div>
           <div className="downloadFormStack">
             <label className="field">
@@ -1923,7 +1938,7 @@ function AgencyDownloadPage({ session, schools, batches }) {
                 onClick={handleGroupPaymentExport}
                 disabled={isGroupExporting}
               >
-                {isGroupExporting ? "추출 중..." : "CSV 내보내기"}
+                {isGroupExporting ? "추출 중..." : "엑셀 내보내기"}
               </button>
             </div>
           </div>
@@ -2350,6 +2365,7 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
       {showExtraInfo && (
         <StudentExtraInfoModal
           extraInfo={application.extraInfo}
+          basic={basicInfoRows(application)}
           studentName={application.studentName}
           onClose={() => setShowExtraInfo(false)}
         />
@@ -4458,6 +4474,7 @@ function BatchCaseDetailPage({
       {showExtraInfo && (
         <StudentExtraInfoModal
           extraInfo={caseData.extraInfo}
+          basic={basicInfoRows(caseData)}
           studentName={caseData.studentName}
           onClose={() => setShowExtraInfo(false)}
         />
