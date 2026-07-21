@@ -247,6 +247,21 @@ export async function fetchSchoolStudents(params = {}) {
   });
 }
 
+export async function fetchSchoolStudentDetail(caseId) {
+  return request(`/school/students/${encodeURIComponent(caseId)}`, {
+    fallbackMessage: "학생 상세를 불러오지 못했습니다.",
+  });
+}
+
+/** 학교 상태 변경 — status는 "NEEDS_SUPPLEMENT"(보완) 또는 "COMPLETED"(완료)만. */
+export async function updateSchoolCaseStatus(caseId, status) {
+  return request(`/school/students/${encodeURIComponent(caseId)}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+    fallbackMessage: "상태 변경에 실패했습니다.",
+  });
+}
+
 export async function fetchAgencyApplications(params = {}) {
   return request(`/agency/application-cases${buildQuery(params)}`, {
     fallbackMessage: "Failed to load agency applications",
@@ -466,6 +481,11 @@ export function studentCaseImagePath(caseId, filename) {
   return `/student-access/cases/${encodeURIComponent(caseId)}/images/${encodeURIComponent(filename)}`;
 }
 
+/** 학교 케이스 스캔 이미지 경로 — fetchAuthedBlob(Bearer) 와 함께 사용. */
+export function schoolCaseImagePath(caseId, filename) {
+  return `/school/students/${encodeURIComponent(caseId)}/images/${encodeURIComponent(filename)}`;
+}
+
 async function downloadBlob(path, filename) {
   const blob = await fetchAuthedBlob(path, "다운로드에 실패했습니다.");
   const url = URL.createObjectURL(blob);
@@ -485,10 +505,17 @@ export async function downloadGroupPayment(schoolId) {
   );
 }
 
-export async function downloadOcrResults(batchId) {
+export async function downloadReceptionList(schoolId) {
   await downloadBlob(
-    `/agency/export/ocr-results${buildQuery({ batchId })}`,
-    "ocr-results.csv",
+    `/agency/export/reception-list${buildQuery({ schoolId })}`,
+    "접수명단_대학교제출용.xlsx",
+  );
+}
+
+export async function downloadStudentRoster(schoolId) {
+  await downloadBlob(
+    `/agency/export/student-roster${buildQuery({ schoolId })}`,
+    "학생명단_및_신청현황표.xlsx",
   );
 }
 

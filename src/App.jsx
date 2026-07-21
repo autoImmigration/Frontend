@@ -15,7 +15,8 @@ import {
 import {
   downloadBatchFiles,
   downloadGroupPayment,
-  downloadOcrResults,
+  downloadReceptionList,
+  downloadStudentRoster,
   excludeAgencyCase,
   includeAgencyCase,
   fetchAgencyApplicationDetail,
@@ -29,6 +30,8 @@ import {
   fetchMe,
   fetchOcrProgress,
   fetchSchoolStudents,
+  fetchSchoolStudentDetail,
+  schoolCaseImagePath,
   fetchSchools,
   bulkAssignDocumentFiles,
   moveDocumentScan,
@@ -82,7 +85,10 @@ const STATUS_CLASS_MAP = {
 
 const NAV_ITEMS = {
   student: [{ page: "student-list", label: "신청 현황" }],
-  school: [{ page: "school-list", label: "학생 목록" }],
+  school: [
+    { page: "school-list", label: "학생 목록" },
+    { page: "school-download", label: "다운로드" },
+  ],
   agency: [
     { page: "agency-dashboard", label: "신청 대시보드" },
     { page: "agency-student-list", label: "학생 목록" },
@@ -218,10 +224,11 @@ function buildSession(role, payload) {
     return {
       role,
       title: `${payload.name} 학생`,
-      subtitle: `${payload.schoolName} · ${payload.term}`,
+      subtitle: payload.term ? `${payload.schoolName} · ${payload.term}` : (payload.schoolName ?? ""),
       passportNumber: payload.passportNumber ?? "",
       birthDate: payload.birthDate ? String(payload.birthDate) : "",
       nationality: payload.nationality ?? "",
+      gender: payload.gender ?? "",
       // 내 정보 카드 표시/수정용 — 프로필 응답에서 전달
       name: payload.name ?? "",
       schoolName: payload.schoolName ?? "",
@@ -321,15 +328,13 @@ function hasTerminalBatchStatus(status) {
   return ["COMPLETED", "NEEDS_REVIEW", "FAILED", "RESULT_UPLOADED", "REJECTED"].includes(status);
 }
 
-function deriveUploadBatchDisplayStatus(batch) {
+/**
+ * 업로드 내역 목록의 상태 — 업로드 자체의 성패만 표시한다 (완료/실패).
+ * 추출·검증 등 처리 파이프라인 진행 상황은 진행 중 배치의 단계 표시와 상세 화면에서 확인.
+ */
+function deriveUploadOnlyStatus(batch) {
   const raw = (batch.uploadBatchStatusRaw ?? "").toUpperCase();
-  const jobRaw = (batch.processingJobStatusRaw ?? "").toUpperCase();
-
-  if (raw === "FAILED" || jobRaw === "FAILED") return "실패";
-  if (raw === "REJECTED") return "반려";
-  if (raw === "NEEDS_REVIEW" || jobRaw === "PARTIAL_SUCCESS") return "보완";
-  if (raw === "COMPLETED" || raw === "RESULT_UPLOADED" || jobRaw === "SUCCEEDED") return "완료";
-  return batch.status;
+  return raw === "FAILED" ? "실패" : "완료";
 }
 
 function buildBatchTimeline(batch) {
@@ -702,9 +707,14 @@ function StatusBadge({ value }) {
   );
 }
 
-function PageHeader({ breadcrumb, title, description, actions }) {
+function PageHeader({ breadcrumb, title, description, actions, onBack }) {
   return (
     <header className="pageHeader">
+      {onBack ? (
+        <button type="button" className="backArrowButton" onClick={onBack} aria-label="이전 화면으로">
+          ←
+        </button>
+      ) : null}
       <div className="pageHeaderText">
         {breadcrumb ? <div className="breadcrumb">{breadcrumb}</div> : null}
         <h1>{title}</h1>
@@ -718,18 +728,37 @@ function PageHeader({ breadcrumb, title, description, actions }) {
 function SummaryStrip({ items, variant = "" }) {
   return (
     <section className={`summaryStrip${variant ? ` ${variant}` : ""}`}>
-      {items.map((item) => (
-        <article
-          key={item.label}
-          className={`summaryItem${item.tone ? ` ${item.tone}` : ""}${
-            item.featured ? " isFeatured" : ""
-          }`}
-        >
-          <span>{item.label}</span>
-          <strong>{item.value}</strong>
-          <p>{item.hint}</p>
-        </article>
-      ))}
+      {items.map((item) => {
+        const baseClassName = `summaryItem${item.tone ? ` ${item.tone}` : ""}${
+          item.featured ? " isFeatured" : ""
+        }`;
+        // onClick이 있으면 필터 카드로 동작: button으로 렌더해 키보드 접근 보장.
+        // onClick이 없는 기존 호출부는 이전과 동일하게 article로 렌더된다.
+        if (item.onClick) {
+          return (
+            <button
+              key={item.label}
+              type="button"
+              className={`${baseClassName} summaryItemClickable${
+                item.isActive ? " isActiveFilter" : ""
+              }`}
+              onClick={item.onClick}
+              aria-pressed={item.isActive ?? false}
+            >
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.hint}</p>
+            </button>
+          );
+        }
+        return (
+          <article key={item.label} className={baseClassName}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.hint}</p>
+          </article>
+        );
+      })}
     </section>
   );
 }
@@ -856,7 +885,7 @@ function NationalityCombobox({ value, onChange, options }) {
         <ul style={{
           position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30,
           margin: "4px 0 0", padding: 4, listStyle: "none",
-          background: "#fff", border: "1px solid var(--line,#e5e7eb)", borderRadius: 8,
+          background: "#fff", border: "1px solid var(--line)", borderRadius: 8,
           boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto",
         }}>
           {filtered.map((option) => (
@@ -868,7 +897,7 @@ function NationalityCombobox({ value, onChange, options }) {
                 style={{
                   display: "block", width: "100%", textAlign: "left", padding: "7px 10px",
                   border: "none", borderRadius: 6, cursor: "pointer", fontSize: 14,
-                  background: value === option ? "var(--primary-tint,#eff6ff)" : "transparent",
+                  background: value === option ? "var(--primary-soft)" : "transparent",
                 }}
               >
                 {option}
@@ -1009,7 +1038,7 @@ function LoginErrorModal({ message, onClose }) {
         aria-labelledby="loginErrorTitle"
         onClick={(event) => event.stopPropagation()}
         style={{
-          background: "var(--color-surface, #ffffff)",
+          background: "var(--surface)",
           borderRadius: 12,
           padding: "1.5rem 1.5rem 1.25rem",
           maxWidth: 360,
@@ -1023,7 +1052,7 @@ function LoginErrorModal({ message, onClose }) {
         <p
           style={{
             margin: "0 0 1.25rem",
-            color: "var(--color-text-muted, #475569)",
+            color: "var(--text-muted)",
             fontSize: "0.92rem",
             lineHeight: 1.5,
           }}
@@ -1065,9 +1094,11 @@ function AppBar({ session, currentSection, onLogout }) {
 function AppShell({ session, page, originPage = null, onNavigate, onLogout, navBadges = {}, children }) {
   const activeKey = pageToActiveKey(page, originPage);
   const currentNav = NAV_ITEMS[session.role].find((item) => item.page === activeKey);
+  // 네비 항목이 하나뿐이면(학생) 모바일에서 사이드바를 숨긴다 — 앱바가 이미 섹션명을 보여줘 중복.
+  const singleNav = NAV_ITEMS[session.role].length <= 1;
 
   return (
-    <div className="appLayout">
+    <div className={`appLayout${singleNav ? " singleNav" : ""}`}>
       <AppBar
         session={session}
         currentSection={currentNav?.label ?? ""}
@@ -1154,11 +1185,11 @@ function ExtraInfoSection({ title, rows }) {
   if (filled.length === 0) return null; // 전부 비었으면 섹션 자체를 숨긴다
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted,#9ca3af)", letterSpacing: "0.08em" }}>{title}</div>
+      <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.08em" }}>{title}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {filled.map(([label, value]) => (
           <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
-            <span style={{ color: "var(--text-secondary,#6b7280)", flexShrink: 0 }}>{label}</span>
+            <span style={{ color: "var(--text-main)", flexShrink: 0 }}>{label}</span>
             <span style={{ textAlign: "right", wordBreak: "break-all", fontVariantNumeric: "tabular-nums" }}>{value}</span>
           </div>
         ))}
@@ -1215,9 +1246,9 @@ function StudentExtraInfoModal({ extraInfo, basic = [], studentName, onClose }) 
       <div style={{ position: "relative", background: "#fff", borderRadius: 14, padding: 28, width: "min(560px, 95vw)", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>신청 상세 정보</h2>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted)", lineHeight: 1, padding: 4 }}>✕</button>
         </div>
-        <p style={{ margin: "0 0 18px", fontSize: 12, color: "var(--text-muted,#6b7280)" }}>
+        <p style={{ margin: "0 0 18px", fontSize: 12, color: "var(--text-muted)" }}>
           {studentName ? `${formatStudentName(studentName)} · ` : ""}추출된 정보만 표시합니다.
         </p>
 
@@ -1227,7 +1258,7 @@ function StudentExtraInfoModal({ extraInfo, basic = [], studentName, onClose }) 
             <ExtraInfoSection key={section.title} title={section.title} rows={section.rows} />
           ))}
           {!hasExtra && basicRows.length === 0 && (
-            <p style={{ fontSize: 13, color: "var(--text-muted,#9ca3af)", margin: "8px 0" }}>추출된 정보가 없습니다.</p>
+            <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "8px 0" }}>추출된 정보가 없습니다.</p>
           )}
         </div>
 
@@ -1237,6 +1268,13 @@ function StudentExtraInfoModal({ extraInfo, basic = [], studentName, onClose }) 
       </div>
     </div>
   );
+}
+
+/** 성별 코드(M/F)를 한국어 라벨로. 값이 없으면 빈 문자열(표시부에서 "—"로 대체). */
+function genderLabel(code) {
+  if (code === "M") return "남성";
+  if (code === "F") return "여성";
+  return "";
 }
 
 /** 상세보기 모달에 넘길 기본 정보 행 — application/caseData 공통 필드에서 뽑는다. */
@@ -1263,6 +1301,7 @@ function StudentListPage({ applications, onOpenDetail, session, onSaveProfile })
   });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   async function handleProfileSave() {
     if (profileSaving || !onSaveProfile) return;
@@ -1271,6 +1310,7 @@ function StudentListPage({ applications, onOpenDetail, session, onSaveProfile })
     try {
       await onSaveProfile(profileForm);
       setProfileMsg({ type: "ok", text: "저장되었습니다." });
+      setEditOpen(false);
     } catch (err) {
       setProfileMsg({ type: "err", text: err.message });
     } finally {
@@ -1279,75 +1319,107 @@ function StudentListPage({ applications, onOpenDetail, session, onSaveProfile })
   }
 
   return (
-    <>
+    <div className="studentPortal">
       <PageHeader
         title="신청 현황"
         description="학생 본인이 제출한 신청 건과 현재 상태를 확인합니다."
       />
 
       {session && (
-        <section className="surfaceCard">
-          <div className="sectionHeading">
-            <h2>내 정보</h2>
-            <p>전화번호·주소·외국인등록번호는 직접 수정할 수 있습니다. 이름·국적·여권번호·생년월일 변경은 유학원에 문의하세요.</p>
+        <section className="surfaceCard myInfoSection">
+          <div className="sectionHeading myInfoHeading">
+            <div>
+              <h2>내 정보</h2>
+              <p>전화번호·주소·외국인등록번호는 직접 수정할 수 있습니다. 이름·국적·여권번호·생년월일 변경은 유학원에 문의하세요.</p>
+            </div>
+            <button type="button" className="secondaryButton myInfoEditButton" onClick={() => { setProfileMsg(null); setEditOpen(true); }}>
+              수정하기
+            </button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14, fontSize: 13 }}>
+          <div className="studentInfoGrid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, fontSize: 13 }}>
             {[
               ["이름", formatStudentName(session.name)],
               ["국적", session.nationality],
               ["여권번호", session.passportNumber],
+              ["성별", genderLabel(session.gender)],
               ["생년월일", session.birthDate],
               ["학교", session.schoolName],
+              ["전화번호", profileForm.phoneNumber],
+              ["외국인등록번호", profileForm.alienRegistrationNumber],
+              ["주소", profileForm.address],
             ].map(([label, value]) => (
               <div key={label}>
-                <div style={{ fontSize: 11, color: "var(--text-muted,#9ca3af)", marginBottom: 2 }}>{label}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
                 <div>{value || "—"}</div>
               </div>
             ))}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, alignItems: "end" }}>
-            {[
-              ["전화번호", "phoneNumber", "010-0000-0000"],
-              ["주소", "address", "현재 거주지 주소"],
-              ["외국인등록번호", "alienRegistrationNumber", "000000-0000000"],
-            ].map(([label, field, placeholder]) => (
-              <label key={field} className="field">
-                <span>{label}</span>
-                <input
-                  type="text"
-                  value={profileForm[field]}
-                  placeholder={placeholder}
-                  onChange={(e) => setProfileForm((f) => ({ ...f, [field]: e.target.value }))}
-                />
-              </label>
-            ))}
-            <div>
-              <button type="button" className="primaryButton" onClick={handleProfileSave} disabled={profileSaving}>
-                {profileSaving ? "저장 중..." : "내 정보 저장"}
-              </button>
-            </div>
-          </div>
           {profileMsg && (
-            <p style={{ margin: "10px 0 0", fontSize: 13, color: profileMsg.type === "ok" ? "var(--color-success,#059669)" : "var(--color-error,#dc2626)" }}>
+            <p style={{ margin: "10px 0 0", fontSize: 13, color: profileMsg.type === "ok" ? "var(--success)" : "var(--danger)" }}>
               {profileMsg.type === "ok" ? "✓ " : "⚠ "}{profileMsg.text}
             </p>
           )}
         </section>
       )}
 
-      <section className="surfaceCard">
+      {editOpen && (
+        <div className="modalOverlay" onClick={(e) => { if (e.target === e.currentTarget) setEditOpen(false); }}>
+          <div className="modalCard" role="dialog" aria-modal="true" aria-label="내 정보 수정">
+            <div className="modalHeader">
+              <h2>내 정보 수정</h2>
+              <button type="button" className="modalClose" onClick={() => setEditOpen(false)} aria-label="닫기">✕</button>
+            </div>
+            <div className="profileEditGrid">
+              {[
+                ["전화번호", "phoneNumber", "010-0000-0000"],
+                ["외국인등록번호", "alienRegistrationNumber", "000000-0000000"],
+              ].map(([label, field, placeholder]) => (
+                <label key={field} className="field">
+                  <span>{label}</span>
+                  <input
+                    type="text"
+                    value={profileForm[field]}
+                    placeholder={placeholder}
+                    onChange={(e) => setProfileForm((f) => ({ ...f, [field]: e.target.value }))}
+                  />
+                </label>
+              ))}
+              <label className="field profileAddressField">
+                <span>주소</span>
+                <input
+                  type="text"
+                  value={profileForm.address}
+                  placeholder="현재 거주지 주소"
+                  onChange={(e) => setProfileForm((f) => ({ ...f, address: e.target.value }))}
+                />
+              </label>
+            </div>
+            {profileMsg?.type === "err" && (
+              <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--danger)" }}>⚠ {profileMsg.text}</p>
+            )}
+            <div className="modalActions">
+              <button type="button" className="secondaryButton" onClick={() => setEditOpen(false)} disabled={profileSaving}>취소</button>
+              <button type="button" className="primaryButton" onClick={handleProfileSave} disabled={profileSaving}>
+                {profileSaving ? "저장 중..." : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="surfaceCard myAppsSection">
         <div className="sectionHeading">
-          <h2>내 신청 건</h2>
+          <h2>내 신청 목록</h2>
           <p>본인 명의로 접수된 신청 건과 현재 처리 상태입니다. 상세 보기에서 보완 서류를 업로드할 수 있습니다.</p>
         </div>
 
         {applications.length === 0 ? (
-          <p style={{ fontSize: 13, color: "var(--text-muted,#9ca3af)", margin: 0 }}>
+          <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
             표시할 신청 건이 없습니다.
           </p>
         ) : (
         <div className="tableWrap">
-          <table className="dataTable stackedTable">
+          <table className="dataTable studentAppTable">
             <thead>
               <tr>
                 <th>신청 유형</th>
@@ -1386,12 +1458,12 @@ function StudentListPage({ applications, onOpenDetail, session, onSaveProfile })
         </div>
         )}
       </section>
-    </>
+    </div>
   );
 }
 
 /** 학생 본인 스캔 이미지 — 학생 토큰으로 인증해 blob 로 로드. */
-function StudentScanImage({ caseId, filename, alt }) {
+function StudentScanImage({ caseId, filename, alt, loadBlob }) {
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -1399,7 +1471,8 @@ function StudentScanImage({ caseId, filename, alt }) {
     if (!caseId || !filename) { setFailed(true); return; }
     let cancelled = false;
     let objectUrl = null;
-    fetchStudentBlob(studentCaseImagePath(caseId, filename))
+    const fetcher = loadBlob || ((cid, fn) => fetchStudentBlob(studentCaseImagePath(cid, fn)));
+    fetcher(caseId, filename)
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
@@ -1410,16 +1483,16 @@ function StudentScanImage({ caseId, filename, alt }) {
   }, [caseId, filename]);
 
   if (failed) {
-    return <div style={{ padding: 20, color: "var(--text-muted,#9ca3af)", fontSize: 13 }}>이미지를 불러올 수 없습니다.</div>;
+    return <div style={{ padding: 20, color: "var(--text-muted)", fontSize: 13 }}>이미지를 불러올 수 없습니다.</div>;
   }
   if (!url) {
-    return <div style={{ padding: 20, color: "var(--text-muted,#9ca3af)", fontSize: 13 }}>불러오는 중…</div>;
+    return <div style={{ padding: 20, color: "var(--text-muted)", fontSize: 13 }}>불러오는 중…</div>;
   }
   return <img src={url} alt={alt} style={{ maxWidth: "100%", maxHeight: "76vh", objectFit: "contain", display: "block", margin: "0 auto", borderRadius: 6 }} />;
 }
 
 /** 학생이 자기 서류 스캔을 넘겨보는 라이트박스. */
-function StudentScanViewer({ caseId, doc, onClose }) {
+function StudentScanViewer({ caseId, doc, onClose, loadBlob }) {
   const scans = doc?.scans ?? [];
   const [index, setIndex] = useState(0);
   const safeIndex = Math.min(index, Math.max(0, scans.length - 1));
@@ -1435,11 +1508,11 @@ function StudentScanViewer({ caseId, doc, onClose }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{doc.name}</h2>
-            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted,#6b7280)" }}>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
               업로드된 스캔 {scans.length}장{scans.length > 1 ? ` · ${safeIndex + 1}/${scans.length}` : ""}
             </p>
           </div>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted)", lineHeight: 1, padding: 4 }}>✕</button>
         </div>
         {scans.length > 1 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -1450,9 +1523,9 @@ function StudentScanViewer({ caseId, doc, onClose }) {
                 onClick={() => setIndex(i)}
                 style={{
                   fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer",
-                  border: `1px solid ${i === safeIndex ? "var(--primary,#2563eb)" : "var(--line,#e5e7eb)"}`,
-                  background: i === safeIndex ? "var(--primary-soft,#eff6ff)" : "#fff",
-                  color: i === safeIndex ? "var(--primary,#2563eb)" : "var(--text-secondary,#374151)",
+                  border: `1px solid ${i === safeIndex ? "var(--primary)" : "var(--line)"}`,
+                  background: i === safeIndex ? "var(--primary-soft)" : "#fff",
+                  color: i === safeIndex ? "var(--primary)" : "var(--text-main)",
                   fontWeight: i === safeIndex ? 600 : 400,
                 }}
               >
@@ -1461,7 +1534,7 @@ function StudentScanViewer({ caseId, doc, onClose }) {
             ))}
           </div>
         )}
-        <StudentScanImage caseId={caseId} filename={scans[safeIndex]} alt={`${doc.name} ${safeIndex + 1}장`} />
+        <StudentScanImage caseId={caseId} filename={scans[safeIndex]} alt={`${doc.name} ${safeIndex + 1}장`} loadBlob={loadBlob} />
       </div>
     </div>
   );
@@ -1472,6 +1545,8 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
   const [uploadingDoc, setUploadingDoc] = useState(null);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState("");
+  // 모바일 간편 필터 — 데스크톱에서는 CSS로 숨김(전체 목록 노출). 제출/미제출만 빠르게 추린다.
+  const [docFilter, setDocFilter] = useState("all");
 
   async function handleStudentUpload(docCode, file) {
     if (!file || !session?.passportNumber) return;
@@ -1492,18 +1567,20 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
   const submittedCount = application.documents.filter(
     (document) => document.status === "제출",
   ).length;
+  const isSubmitted = (document) => document.status === "제출";
+  const visibleDocuments = application.documents.filter((document) => {
+    if (docFilter === "submitted") return isSubmitted(document);
+    if (docFilter === "needed") return !isSubmitted(document);
+    return true;
+  });
 
   return (
-    <>
+    <div className="studentPortal">
       <PageHeader
         breadcrumb="학생 / 신청 상세"
         title={`${application.applicationType} · ${application.visaType}${application.lane ? ` · ${application.lane}` : ""}`}
         description={application.note}
-        actions={
-          <button type="button" className="secondaryButton" onClick={onBack}>
-            목록으로 돌아가기
-          </button>
-        }
+        onBack={onBack}
       />
 
       <SummaryStrip
@@ -1537,7 +1614,7 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
       />
 
       {application.supplementMessage && (
-        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary,#2563eb)", padding: "12px 16px", background: "var(--primary-tint,#eff6ff)" }}>
+        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary)", padding: "12px 16px", background: "var(--primary-soft)" }}>
           <p style={{ margin: 0, fontSize: 14 }}>
             <strong>📢 유학원 안내</strong> — {application.supplementMessage}
           </p>
@@ -1545,8 +1622,8 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
       )}
 
       {(uploadError || uploadSuccess) && (
-        <section className="surfaceCard" style={{ borderLeft: `3px solid ${uploadSuccess ? "var(--color-success,#059669)" : "var(--color-error,#dc2626)"}`, padding: "12px 16px" }}>
-          <p style={{ margin: 0, fontSize: 14, color: uploadSuccess ? "var(--color-success,#059669)" : "var(--color-error,#dc2626)" }}>
+        <section className="surfaceCard" style={{ borderLeft: `3px solid ${uploadSuccess ? "var(--success)" : "var(--danger)"}`, padding: "12px 16px" }}>
+          <p style={{ margin: 0, fontSize: 14, color: uploadSuccess ? "var(--success)" : "var(--danger)" }}>
             {uploadSuccess || uploadError}
           </p>
         </section>
@@ -1556,11 +1633,27 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
         <div className="sectionHeading">
           <h2>서류 목록</h2>
           {application.documents.some((d) => d.status === "미제출") && (
-            <p style={{ color: "var(--color-warning,#d97706)" }}>미제출 서류가 있습니다. 아래에서 직접 업로드할 수 있습니다.</p>
+            <p style={{ color: "var(--warning)" }}>미제출 서류가 있습니다. 아래에서 직접 업로드할 수 있습니다.</p>
           )}
         </div>
+        <div className="docFilterBar">
+          {[
+            ["all", "전체", application.documents.length],
+            ["submitted", "제출됨", submittedCount],
+            ["needed", "제출필요", application.documents.length - submittedCount],
+          ].map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              className={`docFilterChip${docFilter === key ? " isActive" : ""}`}
+              onClick={() => setDocFilter(key)}
+            >
+              {label} <span className="docFilterCount">{count}</span>
+            </button>
+          ))}
+        </div>
         <div className="tableWrap">
-          <table className="dataTable stackedTable">
+          <table className="dataTable studentDocTable">
             <thead>
               <tr>
                 <th>문서명</th>
@@ -1572,15 +1665,17 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
               </tr>
             </thead>
             <tbody>
-              {application.documents.map((document) => (
-                <tr key={document.code} style={{ background: document.status === "미제출" ? "var(--color-warning-soft,#fef3c7)" : undefined }}>
+              {visibleDocuments.map((document) => {
+                // 검수 필요면 사유(note 우선, 없으면 확인 항목 rule)를 아래 한 줄로 노출.
+                // 보완 요청 note는 상태와 무관하게 항상 노출.
+                // 검수 사유는 관리자(유학원)가 보는 document.note를 그대로 노출 — 양쪽 메시지 통일.
+                // (일반 reviewRule 폴백 제거: 학생·관리자가 동일한 검수 메시지를 보게 한다.)
+                const reviewReason = document.note || null;
+                return (
+                <Fragment key={document.code}>
+                <tr className={reviewReason ? "hasReason" : undefined} style={{ background: (document.status === "미제출" || document.status === "검수 필요") ? "var(--warning-soft)" : undefined }}>
                   <td data-label="문서명">
                     <strong>{document.name}</strong>
-                    {document.note && (
-                      <span style={{ display: "block", fontSize: 12, color: "var(--color-error,#dc2626)", marginTop: 2 }}>
-                        {document.note}
-                      </span>
-                    )}
                   </td>
                   <td data-label="분류">{document.category}</td>
                   <td data-label="상태">
@@ -1597,7 +1692,7 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
                         보기{document.scans.length > 1 ? ` (${document.scans.length})` : ""}
                       </button>
                     ) : (
-                      <span style={{ color: "var(--text-muted,#9ca3af)" }}>-</span>
+                      <span style={{ color: "var(--text-muted)" }}>-</span>
                     )}
                   </td>
                   <td data-label="업로드">
@@ -1616,17 +1711,23 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
                             e.target.value = "";
                           }}
                         />
-                        <span
-                          className={document.status === "미제출" ? "primaryButton" : "secondaryButton"}
-                          style={{ fontSize: "0.8rem", padding: "4px 12px", display: "inline-block" }}
-                        >
+                        <span className={`uploadLink${document.status === "미제출" ? " isNeeded" : ""}`}>
                           {uploadingDoc === document.code ? "업로드 중..." : (document.status === "미제출" ? "파일 업로드" : "다시 업로드")}
                         </span>
                       </label>
                     ) : "-"}
                   </td>
                 </tr>
-              ))}
+                {reviewReason && (
+                  <tr className="docReasonRow">
+                    <td colSpan={6} data-label="검수 사유">
+                      <span className="docReasonText">⚠ {reviewReason}</span>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1639,7 +1740,7 @@ function StudentDetailPage({ application, session, onBack, onRefreshApplications
           onClose={() => setViewerDoc(null)}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -1654,23 +1755,52 @@ function SchoolListPage({
   onSearchFieldChange,
   onStatusFilterChange,
   onVisaFilterChange,
+  onRefresh,
 }) {
   const visaOptions = [...new Set(allStudents.map((student) => student.visaType))];
   const searchLabel =
     SCHOOL_SEARCH_OPTIONS.find((option) => option.value === searchField)?.label ?? "학생명";
 
+  // 개인 파일 상세 — 읽기 전용 모달. 학교가 할 수 있는 유일한 쓰기는 상태(보완/완료) 변경뿐.
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const [viewerDoc, setViewerDoc] = useState(null);
+  const [selectedDocCode, setSelectedDocCode] = useState(null);
+  const [docFileIndex, setDocFileIndex] = useState(0);
+
+  // 상세가 로드되면 첫 서류를 자동 선택 (유학원 상세와 동일한 흐름).
+  useEffect(() => {
+    setSelectedDocCode(detail?.documents?.length ? detail.documents[0].code : null);
+    setDocFileIndex(0);
+  }, [detail]);
+
+  const detailOpen = Boolean(detail || detailLoading || detailError);
+
+  async function openDetail(caseId) {
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    try {
+      setDetail(await fetchSchoolStudentDetail(caseId));
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  // 학교 스캔 이미지 로더(Bearer). StudentScanViewer/Image 재사용.
+  const schoolLoadBlob = (cid, fn) => fetchAuthedBlob(schoolCaseImagePath(cid, fn));
+
   return (
     <>
       <PageHeader
         title="학생 목록"
-        description="학생 검색과 필터링, 명단표 추출을 위한 조회 화면입니다."
-        actions={
-          <button type="button" className="primaryButton">
-            학생 명단표 추출
-          </button>
-        }
+        description="학교에 등록된 학생과 신청 상태를 조회합니다."
       />
 
+      {!detailOpen && (
       <section className="surfaceCard">
         <div className="toolbarRow">
           <label className="field fieldCompact">
@@ -1744,9 +1874,8 @@ function SchoolListPage({
                   <th>신청 유형</th>
                   <th>비자 타입</th>
                   <th>상태</th>
-                  <th>소속</th>
-                  <th>유학원</th>
                   <th>최근 갱신</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -1759,14 +1888,216 @@ function SchoolListPage({
                     <td data-label="상태">
                       <StatusBadge value={student.status} />
                     </td>
-                    <td data-label="학과">{student.schoolDepartment}</td>
-                    <td data-label="유학원">{student.agencyName}</td>
                     <td data-label="최근 갱신">{student.lastUpdated}</td>
+                    <td data-label="작업" className="tableActionCell">
+                      <button type="button" className="tableLinkButton" onClick={() => openDetail(student.id)}>
+                        상세 보기
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+      )}
+
+      {detailOpen && (
+        <section className="surfaceCard schoolDetailCard">
+          <div className="schoolDetailHeader">
+            <button
+              type="button"
+              className="backArrowButton"
+              onClick={() => { setDetail(null); setDetailError(null); }}
+              aria-label="목록으로 돌아가기"
+            >
+              ←
+            </button>
+            <div className="schoolDetailTitle">
+              <h2>{detail ? formatStudentName(detail.name) : "학생 상세"}</h2>
+              {detail && (
+                <span className="schoolDetailMeta">{detail.visaType} · {detail.applicationType}</span>
+              )}
+            </div>
+            {detail && (
+              <div className="schoolDetailBadges">
+                <span className={`docCountChip${detail.missingCount > 0 ? " hasMissing" : ""}`}>
+                  서류 {detail.submittedCount}/{detail.submittedCount + detail.missingCount}
+                </span>
+                <StatusBadge value={detail.status} />
+              </div>
+            )}
+          </div>
+
+          {detailLoading && <div className="schoolDetailState">학생 정보를 불러오는 중입니다…</div>}
+          {detailError && <div className="schoolDetailState isError">⚠ {detailError}</div>}
+
+          {detail && (() => {
+            const selDoc = detail.documents.find((d) => d.code === selectedDocCode) ?? null;
+            const scans = selDoc?.scans ?? [];
+            const fileIdx = Math.min(docFileIndex, Math.max(0, scans.length - 1));
+            return (
+              <div className="schoolDetailSplit">
+                {/* 왼쪽: 제출 서류 체크리스트 */}
+                <div className="schoolDocRail">
+                  <div className="railLabel">
+                    제출 서류
+                    <span className={detail.missingCount > 0 ? "isMissing" : "isComplete"}>
+                      {detail.submittedCount}/{detail.submittedCount + detail.missingCount}
+                    </span>
+                  </div>
+                  <div className="schoolDocList">
+                    {detail.documents.map((doc) => (
+                      <button
+                        key={doc.code}
+                        type="button"
+                        className={`documentStatusButton${selectedDocCode === doc.code ? " isActive" : ""}${doc.status === "미제출" ? " isMissing" : ""}`}
+                        onClick={() => { setSelectedDocCode(doc.code); setDocFileIndex(0); }}
+                      >
+                        <strong className="docName">
+                          {doc.name}
+                          {(doc.scans?.length ?? 0) > 1 && (
+                            <span className="docPageCount">· {doc.scans.length}장</span>
+                          )}
+                        </strong>
+                        <StatusBadge value={doc.status} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 가운데: 스캔 미리보기 */}
+                <div className="schoolScanPane">
+                  <div className="scanToolbar">
+                    <strong>{selDoc?.name ?? "서류 미선택"}</strong>
+                    {selDoc && <StatusBadge value={selDoc.status} />}
+                    {selDoc?.note && <span className="scanNote">{selDoc.note}</span>}
+                    {scans.length > 1 && (
+                      <span className="scanPageMeta">{fileIdx + 1} / {scans.length}장</span>
+                    )}
+                  </div>
+                  {scans.length > 1 && (
+                    <div className="scanPageChips">
+                      {scans.map((fn, idx) => (
+                        <button
+                          key={fn}
+                          type="button"
+                          className={`scanPageChip${idx === fileIdx ? " isActive" : ""}`}
+                          onClick={() => setDocFileIndex(idx)}
+                        >
+                          {idx + 1}장
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="scanStage">
+                    {scans.length > 0 ? (
+                      <div
+                        className="schoolScanFrame"
+                        onClick={() => setViewerDoc(selDoc)}
+                        title="클릭하면 크게 보기"
+                      >
+                        <StudentScanImage caseId={detail.id} filename={scans[fileIdx]} alt={selDoc?.name} loadBlob={schoolLoadBlob} />
+                      </div>
+                    ) : (
+                      <div className="scanEmpty">
+                        {selDoc ? (
+                          <>
+                            <StatusBadge value={selDoc.status} />
+                            <strong>{selDoc.name}</strong>
+                            <p>{selDoc.status === "미제출" ? "아직 제출되지 않은 서류입니다." : "이미지 파일이 없습니다."}</p>
+                          </>
+                        ) : (
+                          <p>왼쪽에서 서류를 선택하세요</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 오른쪽: 학생 정보 */}
+                <div className="schoolInfoRail">
+                  <div className="railLabel">학생 정보</div>
+                  <div className="infoList">
+                    {[
+                      ["국적", detail.nationality],
+                      ["여권번호", detail.passportNumber],
+                      ["성별", genderLabel(detail.gender)],
+                      ["생년월일", detail.birthDate],
+                      ["외국인등록번호", formatAlienRegistrationNumber(detail.alienRegistrationNumber) || detail.alienRegistrationNumber],
+                    ].map(([label, value]) => (
+                      <div className="infoItem" key={label}>
+                        <span className="infoLabel">{label}</span>
+                        <span className="infoValue">{value || "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </section>
+      )}
+
+      {viewerDoc && (
+        <StudentScanViewer
+          caseId={detail?.id}
+          doc={viewerDoc}
+          onClose={() => setViewerDoc(null)}
+          loadBlob={schoolLoadBlob}
+        />
+      )}
+    </>
+  );
+}
+
+function SchoolDownloadPage({ students }) {
+  function downloadCsv() {
+    const headers = ["학생명", "국적", "신청 유형", "비자 타입", "상태", "최근 갱신"];
+    const esc = (v) => {
+      const str = String(v ?? "");
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const lines = [headers, ...students.map((s) => [
+      s.name, s.nationality, s.applicationType, s.visaType, s.status, s.lastUpdated,
+    ])];
+    // 엑셀 한글 깨짐 방지용 BOM(﻿) 포함.
+    const csv = "﻿" + lines.map((r) => r.map(esc).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `학생목록_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="다운로드"
+        description="학교에 등록된 학생 목록을 파일로 내려받습니다."
+      />
+      <section className="surfaceCard">
+        <div className="sectionHeading">
+          <h2>학생 목록 다운로드</h2>
+          <p>현재 조회 가능한 학생 {students.length}명의 목록을 CSV(엑셀에서 열림) 파일로 저장합니다.</p>
+        </div>
+        <button
+          type="button"
+          className="primaryButton"
+          disabled={students.length === 0}
+          onClick={downloadCsv}
+        >
+          학생 목록 CSV 다운로드
+        </button>
+        {students.length === 0 && (
+          <p style={{ marginTop: 10, fontSize: 13, color: "var(--text-muted)" }}>
+            내려받을 학생이 없습니다.
+          </p>
         )}
       </section>
     </>
@@ -1775,19 +2106,34 @@ function SchoolListPage({
 
 function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownload }) {
   const [search, setSearch] = useState("");
+  // 요약 카드 클릭으로 배치 테이블을 상태별 필터링: null(전체) | "review" | "done" | "failed"
+  const [statusFilter, setStatusFilter] = useState(null);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return batches;
+    const matchesStatus = (b) => {
+      if (statusFilter === "review") return b.status === "보완" || b.status === "부분 완료";
+      if (statusFilter === "done") return b.status === "완료";
+      if (statusFilter === "failed") return b.status === "실패" || b.status === "반려" || b.status === "중단";
+      return true;
+    };
     const q = search.trim().toLowerCase();
-    return batches.filter(
-      (b) =>
-        b.fileName?.toLowerCase().includes(q) ||
-        b.schoolName?.toLowerCase().includes(q) ||
-        b.note?.toLowerCase().includes(q),
-    );
-  }, [batches, search]);
+    const matchesSearch = (b) =>
+      !q ||
+      b.fileName?.toLowerCase().includes(q) ||
+      b.schoolName?.toLowerCase().includes(q) ||
+      b.note?.toLowerCase().includes(q);
+    return batches.filter((b) => matchesStatus(b) && matchesSearch(b));
+  }, [batches, search, statusFilter]);
 
-  const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = usePagination(filtered, 10, search);
+  const toggleStatusFilter = (key) => {
+    setStatusFilter((prev) => (prev === key ? null : key));
+  };
+
+  const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = usePagination(
+    filtered,
+    10,
+    `${search}|${statusFilter ?? ""}`,
+  );
   const totalStudents = batches.reduce((s, b) => s + (b.studentCount ?? 0), 0);
   const doneCount = batches.filter((b) => b.status === "완료").length;
   // 처리는 끝났지만 검토/보완이 필요한 배치 (NEEDS_REVIEW → "보완", PARTIAL_SUCCESS → "부분 완료")
@@ -1805,7 +2151,7 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
               ZIP 업로드
             </button>
             <button type="button" className="primaryButton" onClick={onOpenDownload}>
-              단체수납표 추출
+              엑셀 다운로드
             </button>
           </>
         }
@@ -1814,10 +2160,38 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
       <SummaryStrip
         variant="agencySummary"
         items={[
-          { label: "전체 케이스", value: `${batches.length}건`, hint: "등록된 ZIP 업로드 수", tone: "tonePrimary" },
-          { label: "검토 필요", value: `${reviewCount}건`, hint: "처리 완료, 보완·검토 대기", tone: "toneWarning" },
-          { label: "완료", value: `${doneCount}건`, hint: "전원 검토 통과", tone: "toneSuccess" },
-          ...(failedCount > 0 ? [{ label: "실패", value: `${failedCount}건`, hint: "처리 실패·반려", tone: "toneNeutral" }] : []),
+          {
+            label: "전체 케이스",
+            value: `${batches.length}건`,
+            hint: "등록된 ZIP 업로드 수",
+            tone: "tonePrimary",
+            onClick: () => setStatusFilter(null),
+          },
+          {
+            label: "검토 필요",
+            value: `${reviewCount}건`,
+            hint: "처리 완료, 보완·검토 대기",
+            tone: "toneWarning",
+            onClick: () => toggleStatusFilter("review"),
+            isActive: statusFilter === "review",
+          },
+          {
+            label: "완료",
+            value: `${doneCount}건`,
+            hint: "전원 검토 통과",
+            tone: "toneSuccess",
+            onClick: () => toggleStatusFilter("done"),
+            isActive: statusFilter === "done",
+          },
+          {
+            // 항상 렌더해 카드 수(5개)를 고정 — 0건이면 중립 톤, 1건 이상이면 위험 톤
+            label: "실패",
+            value: `${failedCount}건`,
+            hint: "처리 실패·반려",
+            tone: failedCount > 0 ? "toneDanger" : "toneNeutral",
+            onClick: () => toggleStatusFilter("failed"),
+            isActive: statusFilter === "failed",
+          },
           { label: "전체 학생", value: `${totalStudents}명`, hint: "모든 케이스 학생 합계", tone: "toneNeutral" },
         ]}
       />
@@ -1837,7 +2211,14 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
         <SectionMeta count={`${filtered.length}건`} helper={totalPages > 1 ? `${currentPage} / ${totalPages} 페이지` : undefined} />
 
         {filtered.length === 0 ? (
-          <EmptyState title="케이스가 없습니다." description="ZIP 파일을 업로드하면 케이스가 생성됩니다." />
+          <EmptyState
+            title="케이스가 없습니다."
+            description={
+              statusFilter || search.trim()
+                ? "조건에 맞는 케이스가 없습니다. 요약 카드 필터나 검색어를 확인해 주세요."
+                : "ZIP 파일을 업로드하면 케이스가 생성됩니다."
+            }
+          />
         ) : (
           <div className="tableWrap">
             <table className="dataTable stackedTable">
@@ -1884,197 +2265,79 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
   );
 }
 
-function AgencySupplementPage({ applications, onOpenDetail }) {
-  const supplementCases = applications.filter((a) => a.missingCount > 0);
-  const totalMissing = supplementCases.reduce((s, a) => s + a.missingCount, 0);
-  const completionRate =
-    applications.length > 0
-      ? Math.round(((applications.length - supplementCases.length) / applications.length) * 100)
-      : null;
+function ExcelExportCard({ title, description, schools, onExport }) {
+  const [selectedSchool, setSelectedSchool] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
+
+  async function handleExport() {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      await onExport(selectedSchool || undefined);
+    } catch (err) {
+      alert(`다운로드 실패: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   return (
-    <>
-      <PageHeader
-        title="보완 알림"
-        description="서류가 미제출되었거나 확인이 필요한 케이스 목록입니다."
-      />
-      <SummaryStrip
-        items={[
-          {
-            label: "보완 필요 케이스",
-            value: `${supplementCases.length}건`,
-            hint: "미제출 서류가 있는 케이스",
-            tone: "toneWarning",
-          },
-          {
-            label: "누락 서류 합계",
-            value: `${totalMissing}건`,
-            hint: "전체 미제출 서류 수",
-            tone: "toneNeutral",
-          },
-          {
-            label: "전체 케이스",
-            value: `${applications.length}건`,
-            hint: "등록된 전체 케이스",
-            tone: "tonePrimarySoft",
-          },
-          {
-            label: "완료 비율",
-            value: completionRate !== null ? `${completionRate}%` : "—",
-            hint: "서류 누락 없는 케이스",
-            tone: "toneSuccess",
-          },
-        ]}
-      />
-      <section className="surfaceCard">
-        <SectionMeta
-          count={`보완 필요 ${supplementCases.length}건`}
-          helper="미제출 서류가 있는 케이스를 표시합니다."
-        />
-        {supplementCases.length === 0 ? (
-          <EmptyState
-            title="보완이 필요한 케이스가 없습니다."
-            description="모든 케이스의 서류가 정상적으로 제출되었습니다."
-          />
-        ) : (
-          <div className="tableWrap">
-            <table className="dataTable stackedTable">
-              <thead>
-                <tr>
-                  <th>학생명</th>
-                  <th>학교명</th>
-                  <th>비자 타입</th>
-                  <th>신청 유형</th>
-                  <th>상태</th>
-                  <th>미제출 서류</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {supplementCases.map((application) => (
-                  <tr key={application.id}>
-                    <td data-label="학생명">{application.studentName}</td>
-                    <td data-label="학교명">{application.schoolName}</td>
-                    <td data-label="비자 타입">{application.visaType}</td>
-                    <td data-label="신청 유형">{application.applicationType}</td>
-                    <td data-label="상태">
-                      <StatusBadge value={application.status} />
-                    </td>
-                    <td data-label="미제출 서류">{application.missingCount}건</td>
-                    <td data-label="작업" className="tableActionCell">
-                      <button
-                        type="button"
-                        className="tableLinkButton"
-                        onClick={() => onOpenDetail(application.id)}
-                      >
-                        케이스 보기
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+    <section className="surfaceCard">
+      <div className="sectionHeading">
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      <div className="downloadFormStack">
+        <label className="field">
+          <span>학교 선택</span>
+          <select value={selectedSchool} onChange={(e) => setSelectedSchool(e.target.value)}>
+            <option value="">전체 학교</option>
+            {schools.map((school) => (
+              <option key={school.id} value={school.id}>{school.name}</option>
+            ))}
+          </select>
+        </label>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="primaryButton"
+            onClick={handleExport}
+            disabled={isExporting}
+          >
+            {isExporting ? "추출 중..." : "엑셀 내보내기"}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
-function AgencyDownloadPage({ session, schools, batches }) {
-  const [selectedSchool, setSelectedSchool] = useState("");
-  const [selectedBatch, setSelectedBatch] = useState("");
-  const [isGroupExporting, setIsGroupExporting] = useState(false);
-  const [isOcrExporting, setIsOcrExporting] = useState(false);
-
-  async function handleGroupPaymentExport() {
-    if (isGroupExporting) return;
-    setIsGroupExporting(true);
-    try {
-      await downloadGroupPayment(selectedSchool || undefined);
-    } catch (err) {
-      alert(`다운로드 실패: ${err.message}`);
-    } finally {
-      setIsGroupExporting(false);
-    }
-  }
-
-  async function handleOcrExport() {
-    if (isOcrExporting) return;
-    setIsOcrExporting(true);
-    try {
-      await downloadOcrResults(selectedBatch || undefined);
-    } catch (err) {
-      alert(`다운로드 실패: ${err.message}`);
-    } finally {
-      setIsOcrExporting(false);
-    }
-  }
-
+function AgencyDownloadPage({ schools }) {
   return (
     <>
       <PageHeader
         title="다운로드"
-        description="단체수납표 및 OCR 결과를 일괄 추출합니다."
+        description="단체수납입금표·접수명단·학생명단 및 신청현황표를 양식 엑셀로 추출합니다."
       />
       <div className="downloadPageGrid">
-        <section className="surfaceCard">
-          <div className="sectionHeading">
-            <h2>단체수납표 추출</h2>
-            <p>학교별 신청 케이스를 단체수납입금표 양식(엑셀)으로 내보냅니다.</p>
-          </div>
-          <div className="downloadFormStack">
-            <label className="field">
-              <span>학교 선택</span>
-              <select value={selectedSchool} onChange={(e) => setSelectedSchool(e.target.value)}>
-                <option value="">전체 학교</option>
-                {schools.map((school) => (
-                  <option key={school.id} value={school.id}>{school.name}</option>
-                ))}
-              </select>
-            </label>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="primaryButton"
-                onClick={handleGroupPaymentExport}
-                disabled={isGroupExporting}
-              >
-                {isGroupExporting ? "추출 중..." : "엑셀 내보내기"}
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section className="surfaceCard">
-          <div className="sectionHeading">
-            <h2>OCR 결과 내보내기</h2>
-            <p>배치별 문서 분류 및 OCR 처리 결과를 CSV로 내보냅니다.</p>
-          </div>
-          <div className="downloadFormStack">
-            <label className="field">
-              <span>배치 선택</span>
-              <select value={selectedBatch} onChange={(e) => setSelectedBatch(e.target.value)}>
-                <option value="">전체 배치</option>
-                {batches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>
-                    {batch.displayName || batch.fileName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="primaryButton"
-                onClick={handleOcrExport}
-                disabled={isOcrExporting}
-              >
-                {isOcrExporting ? "추출 중..." : "CSV 내보내기"}
-              </button>
-            </div>
-          </div>
-        </section>
+        <ExcelExportCard
+          title="단체수납입금표"
+          description="학교별 신청 케이스를 단체수납입금표 양식(엑셀)으로 내보냅니다."
+          schools={schools}
+          onExport={downloadGroupPayment}
+        />
+        <ExcelExportCard
+          title="접수명단 (대학교 제출용)"
+          description="접수일자·서비스항목·영문성명·등록번호·주소·연락처가 담긴 단체접수명단을 내보냅니다."
+          schools={schools}
+          onExport={downloadReceptionList}
+        />
+        <ExcelExportCard
+          title="학생명단 및 신청현황표"
+          description="접수·학생 정보를 채운 신청현황표를 내보냅니다. 접수결과·회계 항목은 빈칸으로 생성됩니다."
+          schools={schools}
+          onExport={downloadStudentRoster}
+        />
       </div>
     </>
   );
@@ -2288,9 +2551,9 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
                         title={fn}
                         style={{
                           fontSize: 11, padding: "4px 10px", borderRadius: 8, cursor: "pointer",
-                          border: `1px solid ${active ? "var(--primary,#2563eb)" : "var(--line,#e5e7eb)"}`,
-                          background: active ? "var(--primary-tint,#eff6ff)" : "#fff",
-                          color: active ? "var(--primary,#2563eb)" : "var(--text-secondary,#374151)",
+                          border: `1px solid ${active ? "var(--primary)" : "var(--line)"}`,
+                          background: active ? "var(--primary-soft)" : "#fff",
+                          color: active ? "var(--primary)" : "var(--text-main)",
                           fontWeight: active ? 600 : 400,
                         }}
                       >
@@ -2368,12 +2631,12 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
             <button
               type="button"
               onClick={() => setShowExtraInfo(true)}
-              style={{ fontSize: 11, background: "none", border: "none", cursor: "pointer", color: "var(--primary,#2563eb)", padding: 0 }}
+              style={{ fontSize: 11, background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
             >
               상세보기
             </button>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-primary)" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-strong)" }}>
             {[
               ["성명", formatStudentName(application.studentName), false],
               ["국적", application.nationality, true],
@@ -2386,8 +2649,8 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
               const isMissing = required && (!value || value === "UNKNOWN");
               return (
                 <div key={label} style={{ display: "flex", gap: 6 }}>
-                  <span style={{ color: "var(--text-secondary)", minWidth: 100, flexShrink: 0 }}>{label}</span>
-                  <span style={{ color: isMissing ? "var(--color-error,#dc2626)" : undefined, fontWeight: isMissing ? 600 : undefined }}>
+                  <span style={{ color: "var(--text-main)", minWidth: 100, flexShrink: 0 }}>{label}</span>
+                  <span style={{ color: isMissing ? "var(--danger)" : undefined, fontWeight: isMissing ? 600 : undefined }}>
                     : {value ?? "—"} {isMissing && "⚠ 미입력"}
                   </span>
                 </div>
@@ -2444,7 +2707,7 @@ function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onB
                         width: 10,
                         height: 10,
                         borderRadius: "50%",
-                        background: entry.type === "system" ? "var(--text-muted)" : entry.type === "status" ? "var(--primary)" : "var(--text)",
+                        background: entry.type === "system" ? "var(--text-muted)" : entry.type === "status" ? "var(--primary)" : "var(--text-strong)",
                         flexShrink: 0,
                         marginTop: 3,
                       }} />
@@ -2483,8 +2746,8 @@ function FolderCard({ icon, name, meta, onClick, disabled }) {
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: "var(--surface, #fff)",
-        border: "1px solid var(--color-border, #e5e7eb)",
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
         borderRadius: 8,
         padding: "14px 12px",
         cursor: disabled ? "default" : "pointer",
@@ -2498,9 +2761,9 @@ function FolderCard({ icon, name, meta, onClick, disabled }) {
       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; }}
     >
       <span style={{ fontSize: "1.75rem", lineHeight: 1 }}>{icon}</span>
-      <strong style={{ fontSize: "0.8125rem", wordBreak: "break-all", color: "var(--color-text, #111827)" }}>{name}</strong>
+      <strong style={{ fontSize: "0.8125rem", wordBreak: "break-all", color: "var(--text-strong)" }}>{name}</strong>
       {meta.map((m, i) => m ? (
-        <span key={i} style={{ fontSize: "0.75rem", color: "var(--color-text-muted, #6b7280)" }}>{m}</span>
+        <span key={i} style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{m}</span>
       ) : null)}
     </button>
   );
@@ -2630,14 +2893,14 @@ function AgencyFileListPage({ batches, session }) {
         description="케이스 · 학생 · 문서 이미지를 폴더 구조로 탐색합니다."
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 12, fontSize: "0.875rem" }}>
+      <div className="fileBreadcrumb">
         {breadcrumbParts.map((part, i) => (
-          <span key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {i > 0 && <span style={{ color: "var(--color-border, #d1d5db)", margin: "0 2px" }}>›</span>}
+          <span key={i} className="fileBreadcrumbItem">
+            {i > 0 && <span className="fileBreadcrumbSep">›</span>}
             {i < breadcrumbParts.length - 1 ? (
               <button
                 type="button"
-                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary, #2563eb)", fontSize: "inherit" }}
+                className="fileBreadcrumbLink"
                 onClick={() => {
                   if (i === 0) { setLevel(0); setSelectedBatch(null); setSelectedCase(null); }
                   else if (i === 1) { setLevel(1); setSelectedCase(null); }
@@ -2646,7 +2909,7 @@ function AgencyFileListPage({ batches, session }) {
                 {part}
               </button>
             ) : (
-              <span style={{ color: "var(--color-text, #111827)", fontWeight: 500 }}>{part}</span>
+              <span className="fileBreadcrumbCurrent">{part}</span>
             )}
           </span>
         ))}
@@ -2678,7 +2941,7 @@ function AgencyFileListPage({ batches, session }) {
           )}
           <PaginationNav currentPage={batchPage} totalPages={batchTotalPages} onPageChange={setBatchPage} />
           {loadingBatch && (
-            <p style={{ marginTop: 12, fontSize: "0.875rem", color: "var(--color-text-muted, #6b7280)" }}>불러오는 중...</p>
+            <p style={{ marginTop: 12, fontSize: "0.875rem", color: "var(--text-muted)" }}>불러오는 중...</p>
           )}
         </section>
       )}
@@ -2738,7 +3001,7 @@ function AgencyFileListPage({ batches, session }) {
             <EmptyState title="이미지가 없습니다." description="배치 처리 완료 후 스캔 이미지가 연결됩니다." />
           ) : (
             <>
-            {saveError && <p style={{ color: "var(--color-error, #dc2626)", fontSize: "0.8125rem", marginBottom: 8 }}>{saveError}</p>}
+            {saveError && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginBottom: 8 }}>{saveError}</p>}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginTop: 12 }}>
               {caseDocuments.map((doc) => {
                 const key = `${selectedCase.id}:${doc.code}`;
@@ -2750,7 +3013,7 @@ function AgencyFileListPage({ batches, session }) {
                     <button
                       type="button"
                       onClick={() => setLightboxDoc(doc)}
-                      style={{ border: "1px solid var(--color-border, #e5e7eb)", borderRadius: 6, overflow: "hidden", background: "#f9fafb", padding: 0, cursor: "zoom-in", display: "block", width: "100%" }}
+                      style={{ border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden", background: "#f9fafb", padding: 0, cursor: "zoom-in", display: "block", width: "100%" }}
                     >
                       <AuthenticatedImage
                         batchId={selectedBatch.id}
@@ -2770,19 +3033,19 @@ function AgencyFileListPage({ batches, session }) {
                           }}
                           onBlur={() => confirmEdit(doc)}
                           disabled={isSaving}
-                          style={{ flex: 1, fontSize: "0.75rem", padding: "2px 6px", border: "1px solid var(--primary, #2563eb)", borderRadius: 4, outline: "none" }}
+                          style={{ flex: 1, fontSize: "0.75rem", padding: "2px 6px", border: "1px solid var(--primary)", borderRadius: 4, outline: "none" }}
                         />
                       </div>
                     ) : (
                       <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-                        <p style={{ fontSize: "0.75rem", color: "var(--color-text-muted, #6b7280)", margin: 0, wordBreak: "break-all", flex: 1 }}>
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, wordBreak: "break-all", flex: 1 }}>
                           {displayName}
                         </p>
                         <button
                           type="button"
                           onClick={() => startEdit(doc)}
                           title="파일명 변경"
-                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: "0.75rem", color: "var(--color-text-muted, #9ca3af)", flexShrink: 0, lineHeight: 1 }}
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: "0.75rem", color: "var(--text-muted)", flexShrink: 0, lineHeight: 1 }}
                         >
                           ✏️
                         </button>
@@ -3121,7 +3384,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                       </button>
                       <button
                         type="button"
-                        className="tableLinkButton"
+                        className="tableLinkButton isDanger"
                         disabled={excludingId === a.id}
                         onClick={() => handleExclude(a)}
                       >
@@ -3219,7 +3482,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
         <tbody>
           {rows.map((s) => (
             <tr key={s.studentName || s.latestCase?.id}>
-              <td data-label="학생명" style={{ color: isFailed ? "var(--color-error,#dc2626)" : undefined }}>
+              <td data-label="학생명" style={{ color: isFailed ? "var(--danger)" : undefined }}>
                 {s.studentName || "이름 미추출"}
               </td>
               <td data-label="국적">{s.nationality || "—"}</td>
@@ -3291,9 +3554,9 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
       </section>
 
       {supplementStudents.length > 0 && (
-        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--color-warning,#d97706)" }}>
+        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--warning)" }}>
           <div className="sectionHeading">
-            <h2>누락 서류 있음 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--color-warning,#d97706)", marginLeft: 6 }}>{supplementStudents.length}명</span></h2>
+            <h2>누락 서류 있음 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--warning)", marginLeft: 6 }}>{supplementStudents.length}명</span></h2>
             <p>"처리하기" 클릭 → 케이스 상세에서 서류 매핑 · 정보 수정 · 보완 요청을 진행하세요.</p>
           </div>
           <SupplementTable rows={supplementStudents} isFailed={false} />
@@ -3301,9 +3564,9 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
       )}
 
       {failedStudents.length > 0 && (
-        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--color-error,#dc2626)" }}>
+        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--danger)" }}>
           <div className="sectionHeading">
-            <h2>추출 실패 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--color-error,#dc2626)", marginLeft: 6 }}>{failedStudents.length}명</span></h2>
+            <h2>추출 실패 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--danger)", marginLeft: 6 }}>{failedStudents.length}명</span></h2>
             <p>"처리하기" 클릭 → 학생 정보를 직접 입력하고 서류를 매핑하세요.</p>
           </div>
           <SupplementTable rows={failedStudents} isFailed={true} />
@@ -3342,17 +3605,13 @@ function AgencyUploadPage({
   return (
     <>
       <PageHeader
+        onBack={onBack}
         title="ZIP 업로드"
         description="접수 정보를 입력하고 스캔본 ZIP 파일을 업로드합니다."
         actions={
-          <>
-            <button type="button" className="secondaryButton" onClick={onOpenHistory}>
-              업로드 내역 보기
-            </button>
-            <button type="button" className="secondaryButton" onClick={onBack}>
-              ← {backLabel}(으)로 돌아가기
-            </button>
-          </>
+          <button type="button" className="secondaryButton" onClick={onOpenHistory}>
+            업로드 내역 보기
+          </button>
         }
       />
 
@@ -3373,11 +3632,11 @@ function AgencyUploadPage({
           </label>
 
           <label className="field">
-            <span>대학교 <span style={{ color: "var(--color-error, #dc2626)" }}>*</span></span>
+            <span>대학교 <span style={{ color: "var(--danger)" }}>*</span></span>
             <select
               value={uploadForm.schoolId}
               onChange={(e) => onUploadFormChange("schoolId", e.target.value)}
-              style={missingSchool ? { borderColor: "var(--color-error, #dc2626)" } : undefined}
+              style={missingSchool ? { borderColor: "var(--danger)" } : undefined}
             >
               <option value="">학교 선택 (필수)</option>
               {schools.map((s) => (
@@ -3387,11 +3646,11 @@ function AgencyUploadPage({
           </label>
 
           <label className="field">
-            <span>신청 타입 <span style={{ color: "var(--color-error, #dc2626)" }}>*</span></span>
+            <span>신청 타입 <span style={{ color: "var(--danger)" }}>*</span></span>
             <select
               value={uploadForm.visaTypeCode}
               onChange={(e) => onUploadFormChange("visaTypeCode", e.target.value)}
-              style={missingVisaType ? { borderColor: "var(--color-error, #dc2626)" } : undefined}
+              style={missingVisaType ? { borderColor: "var(--danger)" } : undefined}
             >
               <option value="">신청 타입 선택 (필수)</option>
               {VISA_TYPE_OPTIONS.map((opt) => (
@@ -3436,7 +3695,7 @@ function AgencyUploadPage({
           </label>
 
           {!selectedZipFile ? (
-            <span className="uploadHint">허용 형식: `.zip` 한 개씩 업로드.</span>
+            <span className="uploadHint">ZIP 파일 1개씩 업로드할 수 있습니다.</span>
           ) : null}
         </div>
 
@@ -3450,7 +3709,7 @@ function AgencyUploadPage({
             {isUploading ? "업로드 중..." : "업로드"}
           </button>
           {selectedZipFile && (missingSchool || missingVisaType) && (
-            <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: "var(--color-error, #dc2626)" }}>
+            <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: "var(--danger)" }}>
               {missingSchool && missingVisaType
                 ? "대학교와 신청 타입을 선택해야 업로드할 수 있습니다."
                 : missingSchool
@@ -3473,7 +3732,7 @@ function AgencyUploadPage({
             <div className="uploadStatusHeader">
               <strong>
                 {uploadFeedback.phase === "uploading"
-                  ? "업로드 요청 전송 중"
+                  ? "업로드 중"
                   : uploadFeedback.phase === "success"
                     ? "업로드 접수 완료 — 처리 중"
                     : "업로드 실패"}
@@ -3489,9 +3748,9 @@ function AgencyUploadPage({
 
             {uploadFeedback.phase === "success" && uploadFeedback.batch ? (
               <div className="uploadStatusMeta" style={{ marginTop: 12 }}>
+                <span>상태 {(liveBatch ?? uploadFeedback.batch).status}</span>
                 <span>배치 ID {uploadFeedback.batch.id}</span>
                 <span>처리 작업 {(liveBatch ?? uploadFeedback.batch).processingJobId || "대기 중"}</span>
-                <span>상태 {(liveBatch ?? uploadFeedback.batch).status}</span>
               </div>
             ) : null}
 
@@ -3547,25 +3806,21 @@ function formatProcessingDuration(seconds) {
   return s > 0 ? `${m}분 ${s}초` : `${m}분`;
 }
 
-function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "대시보드" }) {
+function AgencyUploadHistoryPage({ batches, showProcessingSteps = true, onOpenDetail, onBack, backLabel = "대시보드" }) {
   const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = usePagination(batches, 10);
 
   return (
     <>
       <PageHeader
+        onBack={onBack}
         title="업로드 내역"
-        description="ZIP 업로드 배치 이력과 처리 결과를 확인합니다. 완료 · 보완 · 반려 · 실패 네 가지 상태로 분류됩니다."
-        actions={
-          <button type="button" className="secondaryButton" onClick={onBack}>
-            ← {backLabel}(으)로 돌아가기
-          </button>
-        }
+        description="ZIP 업로드 배치 이력을 확인합니다. 상태는 업로드 자체의 성패(완료/실패)만 표시합니다."
       />
 
       <section className="surfaceCard">
         <SectionMeta
           count={`업로드 배치 ${batches.length}건`}
-          helper={`완료: 정상 처리 · 보완: 서류 누락 · 반려: 정보 불일치 · 실패: 업로드 오류${totalPages > 1 ? ` · ${currentPage}/${totalPages} 페이지` : ""}`}
+          helper={`완료: 업로드 정상 접수 · 실패: 업로드 오류${totalPages > 1 ? ` · ${currentPage}/${totalPages} 페이지` : ""}`}
         />
 
         {batches.length === 0 ? (
@@ -3578,7 +3833,6 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "�
             <table className="dataTable stackedTable">
               <thead>
                 <tr>
-                  <th>배치 ID</th>
                   <th>파일명</th>
                   <th>업로드 시각</th>
                   <th>학생 수</th>
@@ -3590,14 +3844,17 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "�
               </thead>
               <tbody>
                 {pagedBatches.map((batch) => {
-                  const isActiveRow = !TERMINAL_BATCH_STATUSES_SET.has(
-                    (batch.uploadBatchStatusRaw ?? "").toUpperCase()
-                  ) && batch.uploadBatchStatusRaw !== "";
+                  const isActiveRow = showProcessingSteps
+                    && !TERMINAL_BATCH_STATUSES_SET.has(
+                      (batch.uploadBatchStatusRaw ?? "").toUpperCase()
+                    ) && batch.uploadBatchStatusRaw !== "";
                   return (
                     <Fragment key={batch.id}>
                       <tr>
-                        <td data-label="배치 ID">{batch.id}</td>
-                        <td data-label="파일명">{batch.fileName}</td>
+                        <td data-label="파일명">
+                          {batch.fileName}
+                          <div className="cellMeta">{batch.id}</div>
+                        </td>
                         <td data-label="업로드 시각">{batch.uploadedAt}</td>
                         <td data-label="학생 수">
                           {batch.studentCount == null ? "-" : `${batch.studentCount}명`}
@@ -3606,7 +3863,7 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "�
                           {formatProcessingDuration(batch.processingDurationSeconds) ?? "-"}
                         </td>
                         <td data-label="상태">
-                          <StatusBadge value={deriveUploadBatchDisplayStatus(batch)} />
+                          <StatusBadge value={deriveUploadOnlyStatus(batch)} />
                         </td>
                         <td data-label="비고">{batch.note}</td>
                         <td data-label="작업" className="tableActionCell">
@@ -3615,17 +3872,17 @@ function AgencyUploadHistoryPage({ batches, onOpenDetail, onBack, backLabel = "�
                             className="tableLinkButton"
                             onClick={() => onOpenDetail(batch.id)}
                           >
-                            상세 보기
+                            케이스 보기
                           </button>
                         </td>
                       </tr>
                       {isActiveRow && (
                         <tr>
                           <td
-                            colSpan={8}
+                            colSpan={7}
                             style={{
                               padding: "4px 20px 16px",
-                              background: "var(--surface-2,#f9fafb)",
+                              background: "var(--surface-muted)",
                               borderTop: "none",
                             }}
                           >
@@ -3692,20 +3949,20 @@ function AuthenticatedImage({ batchId, filename, imgStyle }) {
   const failed = current === "FAILED";
   const objectUrl = failed ? null : current;
 
-  const defaultImgStyle = { maxWidth: "100%", maxHeight: "540px", objectFit: "contain", borderRadius: "4px", border: "1px solid var(--color-border, #e5e7eb)" };
+  const defaultImgStyle = { maxWidth: "100%", maxHeight: "540px", objectFit: "contain", borderRadius: "4px", border: "1px solid var(--line)" };
   const resolvedImgStyle = imgStyle ?? defaultImgStyle;
 
   if (failed) {
     return (
       <div className="previewSurface" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--color-text-muted, #6b7280)" }}>이미지를 불러올 수 없습니다.</p>
+        <p style={{ color: "var(--text-muted)" }}>이미지를 불러올 수 없습니다.</p>
       </div>
     );
   }
   if (!objectUrl) {
     return (
       <div className="previewSurface" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <p style={{ color: "var(--color-text-muted, #6b7280)" }}>로딩 중...</p>
+        <p style={{ color: "var(--text-muted)" }}>로딩 중...</p>
       </div>
     );
   }
@@ -3841,7 +4098,9 @@ function BatchCaseDetailPage({
   const CHECKLIST_FIELD_LABEL = {
     nationality: "국적", date_of_birth: "생년월일", passport_number: "여권번호",
     student_name: "이름", alien_registration_number: "외국인등록번호",
-    phone_number: "전화번호", address: "주소",
+    phone_number: "전화번호", address: "주소", gender: "성별",
+    enrollment_passport_number: "재학증명서 여권번호",
+    enrollment_birth_date: "재학증명서 생년월일",
   };
   const reviewIssues = useMemo(() => {
     const issues = [];
@@ -4010,9 +4269,9 @@ function BatchCaseDetailPage({
         title={formatStudentName(caseData.studentName)}
         description={`${caseData.nationality} · ${caseData.applicationType} · 제출 ${caseData.submittedCount}건${caseData.missingCount > 0 ? ` · 누락 ${caseData.missingCount}건` : ""}${batchName ? ` · 배치 ${batchName}` : ""}`}
         actions={
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div className="caseHeaderActions">
             {reviewQueue.length > 0 && (
-              <span style={{ fontSize: 12, color: "var(--text-muted,#9ca3af)" }}>
+              <span className="caseQueueMeta">
                 {queueLabel} {_qIdx >= 0 ? `${_qIdx + 1}/${reviewQueue.length}` : `${reviewQueue.length}건`}
               </span>
             )}
@@ -4036,10 +4295,10 @@ function BatchCaseDetailPage({
       {zoomedImage && (
         <div onClick={() => setZoomedImage(null)}
           onWheel={(e) => setZoomScale((s) => Math.min(8, Math.max(1, s - e.deltaY * 0.0015)))}
-          style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out", overflow: "hidden" }}>
+          className="caseLightbox">
           <button type="button" onClick={() => setZoomedImage(null)}
-            style={{ position: "absolute", top: 16, right: 20, background: "none", border: "none", color: "#fff", fontSize: "1.8rem", cursor: "pointer", lineHeight: 1, zIndex: 1 }}>✕</button>
-          <div style={{ position: "absolute", top: 18, left: 20, color: "rgba(255,255,255,0.7)", fontSize: 12 }}>
+            className="caseLightboxClose">✕</button>
+          <div className="caseLightboxHint">
             휠: 확대/축소 · 드래그: 이동 · {Math.round(zoomScale * 100)}%
           </div>
           <div
@@ -4049,8 +4308,8 @@ function BatchCaseDetailPage({
             onMouseUp={() => { zoomDrag.current = null; }}
             onMouseLeave={() => { zoomDrag.current = null; }}
             onDoubleClick={() => { setZoomScale(1); setZoomOffset({ x: 0, y: 0 }); }}
+            className="caseLightboxCanvas"
             style={{
-              maxWidth: "94vw", maxHeight: "92vh",
               cursor: zoomScale > 1 ? "grab" : "default",
               transform: `translate(${zoomOffset.x}px, ${zoomOffset.y}px) scale(${zoomScale})`,
               transition: zoomDrag.current ? "none" : "transform 0.08s ease-out",
@@ -4062,49 +4321,42 @@ function BatchCaseDetailPage({
       )}
 
       {showPanel && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
+        <div className="caseModalOverlay"
           onClick={(e) => { if (e.target === e.currentTarget) setShowPanel(false); }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)" }} />
-          <div style={{ position: "relative", background: "#fff", borderRadius: 12, padding: 28, width: "min(640px, 95vw)", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div className="caseModalBackdrop" />
+          <div className="caseModal isWide">
+            <div className="caseModalHead">
               <div>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>보완 요청 작성</h2>
-                <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted,#6b7280)" }}>보완이 필요한 서류를 선택하고 사유를 입력하세요.</p>
+                <h2 className="caseModalTitle">보완 요청 작성</h2>
+                <p className="caseModalSub">보완이 필요한 서류를 선택하고 사유를 입력하세요.</p>
               </div>
-              <button type="button" onClick={() => setShowPanel(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
+              <button type="button" onClick={() => setShowPanel(false)} className="caseModalClose">✕</button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+            <div className="caseChecklistRows">
               {caseData.documents.map((doc) => (
-                <div key={doc.code} style={{
-                  display: "grid", gridTemplateColumns: "20px 1fr auto", gap: 10, alignItems: "center",
-                  padding: "10px 12px", borderRadius: 8,
-                  background: checkedDocs[doc.code] ? "var(--primary-tint,#eff6ff)" : "var(--surface-muted,#f9fafb)",
-                  border: `1px solid ${checkedDocs[doc.code] ? "var(--primary-light,#bfdbfe)" : "var(--line,#e5e7eb)"}`,
-                }}>
+                <div key={doc.code} className={`caseChecklistRow${checkedDocs[doc.code] ? " isChecked" : ""}`}>
                   <input type="checkbox" id={`supp-${doc.code}`} checked={!!checkedDocs[doc.code]} onChange={() => toggleDoc(doc.code)}
-                    style={{ width: 16, height: 16, cursor: "pointer", accentColor: "var(--primary)" }} />
-                  <label htmlFor={`supp-${doc.code}`} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-                    <span style={{ fontWeight: 600 }}>{doc.name}</span>
+                    className="caseChecklistCheckbox" />
+                  <label htmlFor={`supp-${doc.code}`} className="caseChecklistLabel">
+                    <strong>{doc.name}</strong>
                     <StatusBadge value={doc.status} />
                   </label>
                   <input type="text" placeholder="사유 (선택)" value={reasons[doc.code] ?? ""} onChange={(e) => setReason(doc.code, e.target.value)}
                     disabled={!checkedDocs[doc.code]}
-                    style={{ fontSize: 13, padding: "5px 10px", borderRadius: 7, border: "1px solid var(--line,#e5e7eb)", width: 200,
-                      background: checkedDocs[doc.code] ? "#fff" : "var(--surface-muted,#f9fafb)",
-                      color: checkedDocs[doc.code] ? "var(--text-primary)" : "var(--text-muted,#9ca3af)", outline: "none" }} />
+                    className="caseChecklistReason" />
                 </div>
               ))}
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-secondary,#374151)" }}>학생 안내 메시지 (선택)</label>
+            <div className="caseModalField">
+              <label className="caseModalFieldLabel">학생 안내 메시지 (선택)</label>
               <textarea value={globalMessage} onChange={(e) => setGlobalMessage(e.target.value)}
                 placeholder="학생에게 전달할 추가 안내 사항을 입력하세요." rows={3}
-                style={{ width: "100%", fontSize: 13, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--line,#e5e7eb)", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+                className="caseTextarea" />
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <div className="caseModalActions">
               <button type="button" className="secondaryButton" onClick={() => setShowPanel(false)}>취소</button>
               <button type="button" className="primaryButton" onClick={handleSendSupplement} disabled={sending}>
                 {sending ? "전송 중..." : "보완 요청 보내기"}
@@ -4115,23 +4367,23 @@ function BatchCaseDetailPage({
       )}
 
       {uploadModalDoc && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
+        <div className="caseModalOverlay"
           onClick={(e) => { if (e.target === e.currentTarget) { setUploadModalDoc(null); setUploadFile(null); } }}>
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)" }} />
-          <div style={{ position: "relative", background: "#fff", borderRadius: 12, padding: 28, width: "min(440px, 95vw)", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>서류 업로드</h2>
-              <button type="button" onClick={() => { setUploadModalDoc(null); setUploadFile(null); }} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--text-muted,#9ca3af)", lineHeight: 1, padding: 4 }}>✕</button>
+          <div className="caseModalBackdrop" />
+          <div className="caseModal isNarrow">
+            <div className="caseModalHead">
+              <h2 className="caseModalTitle">서류 업로드</h2>
+              <button type="button" onClick={() => { setUploadModalDoc(null); setUploadFile(null); }} className="caseModalClose">✕</button>
             </div>
-            <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--text-muted,#6b7280)" }}>
-              <strong style={{ color: "var(--text-primary)" }}>{uploadModalDoc.name}</strong> 서류 파일을 선택하세요. 관리자가 직접 올리는 서류이므로 업로드 즉시 제출 처리됩니다.
+            <p className="caseModalDesc">
+              <strong>{uploadModalDoc.name}</strong> 서류 파일을 선택하세요. 관리자가 직접 올리는 서류이므로 업로드 즉시 제출 처리됩니다.
             </p>
             <input type="file" accept="image/*,.pdf"
               onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-              style={{ width: "100%", fontSize: 13, marginBottom: 8, boxSizing: "border-box" }} />
-            {uploadFile && <p style={{ fontSize: 12, color: "var(--color-success,#059669)", margin: "0 0 8px" }}>선택됨: {uploadFile.name}</p>}
-            {linkError && <p style={{ fontSize: 12, color: "var(--color-error,#dc2626)", margin: "0 0 8px" }}>{linkError}</p>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              className="caseFileInput" />
+            {uploadFile && <p className="caseSuccessText hasBottomGap">선택됨: {uploadFile.name}</p>}
+            {linkError && <p className="caseErrorText hasBottomGap">{linkError}</p>}
+            <div className="caseModalActions hasTopGap">
               <button type="button" className="secondaryButton" onClick={() => { setUploadModalDoc(null); setUploadFile(null); }}>취소</button>
               <button type="button" className="primaryButton" onClick={handleConfirmUpload} disabled={!uploadFile || uploading}>
                 {uploading ? "업로드 중..." : "확인"}
@@ -4141,39 +4393,38 @@ function BatchCaseDetailPage({
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "300px 1fr 260px", gap: 0, alignItems: "stretch", minHeight: "calc(100vh - 220px)", border: "1px solid var(--line,#e5e7eb)", borderRadius: 8, overflow: "hidden" }}>
+      <div className="caseDetailSplit">
         {/* 왼쪽: 서류 체크리스트 */}
-        <div style={{ borderRight: "1px solid var(--line,#e5e7eb)", background: "var(--surface-2,#f9fafb)", display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--line,#e5e7eb)", fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted,#6b7280)", letterSpacing: "0.06em" }}>
-            {caseData.applicationType} · 필요서류
-            <span style={{ float: "right", color: caseData.missingCount > 0 ? "var(--color-error,#dc2626)" : "var(--color-success,#059669)" }}>
+        <div className="caseDocRail">
+          <div className="railLabel caseRailHead">
+            <span>{caseData.applicationType} · 필요서류</span>
+            <span className={caseData.missingCount > 0 ? "isMissing" : "isComplete"}>
               {caseData.submittedCount}/{caseData.submittedCount + caseData.missingCount} · {caseData.missingCount > 0 ? `${caseData.missingCount}개 누락` : "완비"}
             </span>
           </div>
-          <div className="documentStatusList" style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
+          <div className="documentStatusList caseDocList">
             {caseData.documents.map((doc) => (
               <div key={doc.code}>
                 <button
                   type="button"
-                  className={`documentStatusButton${selectedDocCode === doc.code ? " isActive" : ""}`}
+                  className={`documentStatusButton${selectedDocCode === doc.code ? " isActive" : ""}${doc.status === "미제출" ? " isMissing" : ""}`}
                   onClick={() => setSelectedDocCode(doc.code)}
-                  style={{ borderLeft: doc.status === "미제출" ? "3px solid var(--color-error,#dc2626)" : undefined }}
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <strong style={{ display: "block", wordBreak: "keep-all", overflowWrap: "anywhere", lineHeight: 1.3 }}>
+                  <div className="caseDocMain">
+                    <strong className="caseDocName">
                       {doc.name}
                       {(doc.sourceFilenames?.length ?? 0) > 1 && (
-                        <span style={{ marginLeft: 6, fontSize: "0.72rem", fontWeight: 600, color: "var(--primary,#2563eb)" }}>· {doc.sourceFilenames.length}장</span>
+                        <span className="docPageCount">· {doc.sourceFilenames.length}장</span>
                       )}
                     </strong>
                     {doc.sourceFilename && (
-                      <p style={{ fontSize: "0.75rem", marginTop: 2, color: "var(--color-text-muted, #9ca3af)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.sourceFilename}</p>
+                      <p className="caseDocFile">{doc.sourceFilename}</p>
                     )}
                   </div>
                   <StatusBadge value={doc.status} />
                 </button>
                 {doc.status === "미제출" && (
-                  <button type="button" style={{ width: "100%", fontSize: 12, fontWeight: 600, padding: "5px 12px", background: "var(--primary-tint,#eff6ff)", border: "none", borderTop: "1px dashed var(--line,#e5e7eb)", cursor: "pointer", color: "var(--primary,#2563eb)", textAlign: "left" }}
+                  <button type="button" className="caseUploadInlineButton"
                     onClick={() => { setUploadModalDoc(doc); setUploadFile(null); setLinkError(""); }}>
                     + 서류 업로드
                   </button>
@@ -4182,23 +4433,13 @@ function BatchCaseDetailPage({
             ))}
             {caseData.otherDocuments?.length > 0 && (
               <>
-                <div style={{ padding: "8px 12px 4px", fontSize: "0.75rem", color: "var(--color-text-muted, #9ca3af)", fontWeight: 600, letterSpacing: "0.04em", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div className="caseOtherHead">
                   <span>기타 서류 ({caseData.otherDocuments.length}건)</span>
                   <button
                     type="button"
                     onClick={toggleScanTidyMode}
                     title="기타 스캔을 양식에 일괄 배정하는 정리 모드"
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      padding: "2px 8px",
-                      borderRadius: 10,
-                      border: scanTidyMode ? "1px solid var(--primary,#2563eb)" : "1px solid var(--line,#e5e7eb)",
-                      background: scanTidyMode ? "var(--primary-tint,#eff6ff)" : "none",
-                      color: scanTidyMode ? "var(--primary,#2563eb)" : "var(--color-text-muted,#9ca3af)",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
+                    className={`caseTidyToggle${scanTidyMode ? " isActive" : ""}`}
                   >
                     스캔 정리{scanTidyMode ? " 끄기" : ""}
                   </button>
@@ -4208,8 +4449,7 @@ function BatchCaseDetailPage({
                   return (
                     <div
                       key={filename}
-                      className={`documentStatusButton${selectedDocCode === `other:${filename}` ? " isActive" : ""}`}
-                      style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: checked ? "var(--primary-tint,#eff6ff)" : undefined }}
+                      className={`documentStatusButton caseOtherItem${selectedDocCode === `other:${filename}` ? " isActive" : ""}${checked ? " isChecked" : ""}`}
                       onClick={() => setSelectedDocCode(`other:${filename}`)}
                     >
                       {scanTidyMode && (
@@ -4218,12 +4458,12 @@ function BatchCaseDetailPage({
                           checked={checked}
                           onClick={(e) => e.stopPropagation()}
                           onChange={() => toggleOther(filename)}
-                          style={{ width: 15, height: 15, cursor: "pointer", accentColor: "var(--primary)", flexShrink: 0 }}
+                          className="caseTidyCheckbox"
                         />
                       )}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <strong style={{ fontWeight: 400 }}>기타</strong>
-                        <p style={{ fontSize: "0.75rem", marginTop: 2, color: "var(--color-text-muted, #9ca3af)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{filename}</p>
+                      <div className="caseOtherBody">
+                        <strong>기타</strong>
+                        <p className="caseDocFile">{filename}</p>
                       </div>
                       <span className="status statusNeutral">제출</span>
                     </div>
@@ -4235,12 +4475,12 @@ function BatchCaseDetailPage({
 
           {/* 다중 선택 일괄 적용 바 (스캔 정리 모드에서만) */}
           {scanTidyMode && selectedOthers.length > 0 && (
-            <div style={{ borderTop: "1px solid var(--line,#e5e7eb)", padding: "10px 12px", background: "var(--primary-tint,#eff6ff)", display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>선택 {selectedOthers.length}건</div>
+            <div className="caseBulkBar">
+              <div className="caseBulkTitle">선택 {selectedOthers.length}건</div>
               <select
                 value={bulkTargetCode}
                 onChange={(e) => setBulkTargetCode(e.target.value)}
-                style={{ width: "100%", fontSize: 12, padding: "6px 8px", border: "1px solid var(--line,#e5e7eb)", borderRadius: 8, background: "#fff", color: "var(--text-primary)" }}
+                className="caseSelect"
               >
                 <option value="">양식 선택…</option>
                 {caseData.documents.map((d) => (
@@ -4249,12 +4489,12 @@ function BatchCaseDetailPage({
                   </option>
                 ))}
               </select>
-              {bulkError && <p style={{ margin: 0, fontSize: 12, color: "var(--color-error,#dc2626)" }}>⚠ {bulkError}</p>}
-              <div style={{ display: "flex", gap: 6 }}>
-                <button type="button" className="secondaryButton" style={{ fontSize: 12, padding: "6px 10px", flex: 1 }} onClick={() => { setSelectedOthers([]); setBulkTargetCode(""); setBulkError(""); }}>
+              {bulkError && <p className="caseErrorText">⚠ {bulkError}</p>}
+              <div className="caseBulkActions">
+                <button type="button" className="secondaryButton" onClick={() => { setSelectedOthers([]); setBulkTargetCode(""); setBulkError(""); }}>
                   선택 해제
                 </button>
-                <button type="button" className="primaryButton" style={{ fontSize: 12, padding: "6px 10px", flex: 1, whiteSpace: "nowrap" }} disabled={!bulkTargetCode || bulkApplying} onClick={handleBulkApply}>
+                <button type="button" className="primaryButton" disabled={!bulkTargetCode || bulkApplying} onClick={handleBulkApply}>
                   {bulkApplying ? "적용 중…" : "일괄 적용"}
                 </button>
               </div>
@@ -4263,21 +4503,21 @@ function BatchCaseDetailPage({
         </div>
 
         {/* 가운데: 이미지 뷰어 */}
-        <div style={{ background: "#fff", display: "flex", flexDirection: "column", padding: 16, gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <strong style={{ fontSize: 15 }}>{selectedDoc?.name ?? otherFilename ?? "서류 미선택"}</strong>
+        <div className="caseScanPane">
+          <div className="scanToolbar">
+            <strong>{selectedDoc?.name ?? otherFilename ?? "서류 미선택"}</strong>
             {selectedDoc && <span className={STATUS_CLASS_MAP[selectedDoc.status] ?? "status statusNeutral"}>{selectedDoc.status}</span>}
             {selectedDoc?.note && (
-              <span style={{ color: "var(--danger)", fontSize: 13, fontWeight: 600 }}>
+              <span className="scanNote">
                 {selectedDoc.note}
               </span>
             )}
             {selectedDocFiles.length > 1 && (
-              <span style={{ fontSize: 12, color: "var(--text-muted,#6b7280)" }}>{safeFileIndex + 1} / {selectedDocFiles.length}장</span>
+              <span className="scanPageMeta">{safeFileIndex + 1} / {selectedDocFiles.length}장</span>
             )}
           </div>
           {selectedDocFiles.length > 1 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <div className="scanPageChips">
               {selectedDocFiles.map((fn, idx) => {
                 const active = idx === safeFileIndex;
                 return (
@@ -4286,13 +4526,7 @@ function BatchCaseDetailPage({
                     type="button"
                     onClick={() => setActiveFileIndex(idx)}
                     title={fn}
-                    style={{
-                      fontSize: 11, padding: "4px 10px", borderRadius: 8, cursor: "pointer",
-                      border: `1px solid ${active ? "var(--primary,#2563eb)" : "var(--line,#e5e7eb)"}`,
-                      background: active ? "var(--primary-tint,#eff6ff)" : "#fff",
-                      color: active ? "var(--primary,#2563eb)" : "var(--text-secondary,#374151)",
-                      fontWeight: active ? 600 : 400,
-                    }}
+                    className={`scanPageChip${active ? " isActive" : ""}`}
                   >
                     {idx + 1}장
                   </button>
@@ -4300,44 +4534,44 @@ function BatchCaseDetailPage({
               })}
             </div>
           )}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "flex-start" }}>
+          <div className="scanStage caseScanStage">
             {imageFilename ? (
               <div
                 onClick={() => openZoom(imageFilename)}
                 title="클릭하면 확대 (확대 후 휠로 줌, 드래그로 이동)"
-                style={{ maxHeight: "calc(100vh - 300px)", aspectRatio: "210 / 297", overflow: "hidden", border: "1px solid var(--line)", borderRadius: 6, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-in" }}>
+                className="caseScanFrame">
                 <AuthenticatedImage batchId={batchId} filename={imageFilename}
-                  imgStyle={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+                  imgStyle={{ width: "100%", height: "auto", display: "block" }} />
               </div>
             ) : (
-              <div style={{ width: "100%", minHeight: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, background: "var(--surface-2,#f9fafb)", border: "1px dashed var(--line,#e5e7eb)", borderRadius: 6, padding: 24 }}>
+              <div className="scanEmpty">
                 {selectedDoc ? (
                   <>
                     <span className={STATUS_CLASS_MAP[selectedDoc.status] ?? "status statusNeutral"}>{selectedDoc.status}</span>
                     <strong>{selectedDoc.name}</strong>
-                    <p style={{ color: "var(--text-muted,#6b7280)", fontSize: "0.875rem", margin: 0 }}>
+                    <p>
                       {selectedDoc.status === "미제출" ? "아직 제출되지 않은 서류입니다." : "이미지 파일 정보가 없습니다."}
                     </p>
                   </>
-                ) : <p style={{ color: "var(--text-muted,#9ca3af)", margin: 0 }}>왼쪽에서 서류를 선택하세요</p>}
+                ) : <p>왼쪽에서 서류를 선택하세요</p>}
               </div>
             )}
           </div>
 
           {imageFilename && (
-            <div style={{ borderTop: "1px solid var(--line,#e5e7eb)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted,#6b7280)", letterSpacing: "0.04em" }}>
+            <div className="caseScanAssign">
+              <div className="caseKicker">
                 이 스캔의 양식
               </div>
-              <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted,#9ca3af)", lineHeight: 1.5 }}>
+              <p className="caseScanAssignHint">
                 이 스캔의 양식을 바꾸거나 ‘기타(미지정)’로 빼낼 수 있습니다. 여러 장이면 위 탭에서 장을 선택한 뒤 변경하세요.
               </p>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <div className="caseScanAssignRow">
                 <select
                   value={isOtherDoc ? "OTHER" : (selectedDoc?.code ?? "OTHER")}
                   disabled={mapping}
                   onChange={(e) => handleMoveScan(imageFilename, e.target.value)}
-                  style={{ flex: "1 1 120px", minWidth: 120, fontSize: 12, padding: "6px 8px", border: "1px solid var(--line,#e5e7eb)", borderRadius: 10, background: "#fff", color: "var(--text-primary)" }}
+                  className="caseSelect caseScanSelect"
                 >
                   {caseData.documents.map((d) => (
                     <option key={d.code} value={d.code}>
@@ -4346,10 +4580,10 @@ function BatchCaseDetailPage({
                   ))}
                   <option value="OTHER">기타(미지정) — 양식에서 제외</option>
                 </select>
-                {mapping && <span style={{ fontSize: 12, color: "var(--text-muted,#9ca3af)" }}>이동 중…</span>}
+                {mapping && <span className="caseMutedText">이동 중…</span>}
               </div>
               {mapFeedback && (
-                <p style={{ margin: 0, fontSize: 12, color: mapFeedback.type === "ok" ? "var(--color-success,#166534)" : "var(--color-error,#dc2626)" }}>
+                <p className={mapFeedback.type === "ok" ? "caseSuccessText" : "caseErrorText"}>
                   {mapFeedback.type === "ok" ? "✓ " : "⚠ "}{mapFeedback.text}
                 </p>
               )}
@@ -4358,18 +4592,18 @@ function BatchCaseDetailPage({
         </div>
 
         {/* 오른쪽: 케이스 패널 */}
-        <div style={{ borderLeft: "1px solid var(--line,#e5e7eb)", background: "#fff", display: "flex", flexDirection: "column", padding: 16, gap: 14, overflowY: "auto" }}>
+        <div className="caseInfoRail">
           {/* 상태 → 검토 체크리스트 */}
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted,#9ca3af)", letterSpacing: "0.08em" }}>검토 체크리스트</div>
+            <div className="caseSectionHead">
+              <div className="caseKicker">검토 체크리스트</div>
               {reviewIssues.length === 0 ? (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--color-success,#059669)" }}>✓ 이슈 없음</span>
+                <span className="caseIssueOk">✓ 이슈 없음</span>
               ) : (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--color-error,#dc2626)" }}>남은 이슈 {reviewIssues.length}건</span>
+                <span className="caseIssueBad">남은 이슈 {reviewIssues.length}건</span>
               )}
             </div>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+            <div className="caseStatusRow">
               {(() => {
                 const isCompleted = caseData.status === "COMPLETED";
                 return (
@@ -4380,11 +4614,9 @@ function BatchCaseDetailPage({
               })()}
             </div>
             {reviewIssues.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, ...(reviewIssues.length > 6 ? { maxHeight: 160, overflowY: "auto" } : {}) }}>
+              <div className={`caseIssueList${reviewIssues.length > 6 ? " isScrollable" : ""}`}>
                 {reviewIssues.map((issue) => {
-                  const color = issue.type === "field" ? "var(--color-error,#dc2626)"
-                    : issue.type === "missing" ? "#ea580c"
-                    : "#ca8a04";
+                  const isWarn = issue.type !== "field";
                   return (
                     <button
                       key={`${issue.type}:${issue.key ?? issue.code}`}
@@ -4394,24 +4626,28 @@ function BatchCaseDetailPage({
                         if (issue.type === "field") openFieldEditFromChecklist(issue.key);
                         else setSelectedDocCode(issue.code);
                       }}
-                      style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", background: "none", border: "none", borderLeft: `2px solid ${color}`, padding: "2px 4px 2px 8px", cursor: "pointer", textAlign: "left", fontSize: 12, color: "var(--text-primary,#0f172a)" }}
+                      className={`caseIssueItem${isWarn ? " isWarn" : ""}`}
                     >
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{issue.label}</span>
+                      <span className="caseIssueDot" />
+                      <span className="caseIssueBody">
+                        <span className="caseIssueLabel">{issue.label}</span>
+                        {issue.detail && (
+                          <span className="caseIssueDetail">{issue.detail}</span>
+                        )}
+                      </span>
                     </button>
                   );
                 })}
               </div>
             )}
             {caseData.status === "COMPLETED" ? (
-              <button type="button" className="secondaryButton" style={{ fontSize: 11, padding: "4px 10px", width: "100%" }}
+              <button type="button" className="secondaryButton caseWideAction"
                 disabled={statusSaving}
                 onClick={() => { if (window.confirm("이 학생을 검토 상태로 되돌리고 학생 목록에서 뺄까요?")) handleSetCaseStatus("NEEDS_REVIEW"); }}>
                 {statusSaving ? "처리 중..." : "검토로 되돌리기 (목록에서 빼기)"}
               </button>
             ) : (
-              <button type="button" className="primaryButton"
-                style={{ fontSize: 11, padding: "4px 10px", width: "100%", ...(reviewIssues.length === 0 ? { background: "var(--color-success,#059669)", borderColor: "var(--color-success,#059669)" } : {}) }}
+              <button type="button" className={`primaryButton caseWideAction${reviewIssues.length === 0 ? " isReady" : ""}`}
                 disabled={statusSaving}
                 onClick={() => {
                   const confirmText = reviewIssues.length > 0
@@ -4424,14 +4660,14 @@ function BatchCaseDetailPage({
             )}
           </div>
 
-          <hr style={{ border: "none", borderTop: "1px solid var(--line,#e5e7eb)", margin: 0 }} />
+          <hr className="caseDivider" />
 
           {/* 학생 정보 / 수정 */}
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted,#9ca3af)", letterSpacing: "0.08em" }}>학생 정보</div>
-              <div style={{ display: "flex", gap: 12 }}>
-                <button type="button" style={{ fontSize: 11, background: "none", border: "none", cursor: "pointer", color: "var(--primary,#2563eb)", padding: 0 }} onClick={() => setShowExtraInfo(true)}>
+            <div className="caseSectionHead">
+              <div className="caseKicker">학생 정보</div>
+              <div>
+                <button type="button" className="caseLinkButton" onClick={() => setShowExtraInfo(true)}>
                   상세보기
                 </button>
               </div>
@@ -4444,12 +4680,13 @@ function BatchCaseDetailPage({
                   validations = {};
                 }
                 return (
-              <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12 }}>
+              <div className="caseFieldList">
                 {[
                   ["이름", caseData.studentName ? formatStudentName(caseData.studentName) : caseData.studentName, true, null, "name"],
                   ["국적", caseData.nationality, true, "nationality", "nationality"],
                   ["생년월일", caseData.birthDate, true, null, "birthDate"],
                   ["여권번호", caseData.passportNumber, true, null, "passportNumber"],
+                  ["성별", genderLabel(caseData.gender), false, null, null],
                   ["외국인등록번호", formatAlienRegistrationNumber(caseData.alienRegistrationNumber), false, "alien_registration_number", "alienRegistrationNumber"],
                   ["전화번호", caseData.phoneNumber, false, null, "phoneNumber"],
                   ["주소", caseData.address, false, "address", "address"],
@@ -4465,9 +4702,9 @@ function BatchCaseDetailPage({
                   const isHighlighted = editable && highlightField === apiField;
                   if (isEditing) {
                     return (
-                      <div key={label} style={{ background: isHighlighted ? "#dbeafe" : undefined, borderRadius: 6, transition: "background 0.18s ease" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ color: "var(--text-muted,#9ca3af)", flexShrink: 0 }}>{label}</span>
+                      <div key={label} className={`caseFieldEditBox${isHighlighted ? " isHighlighted" : ""}`}>
+                        <div className="caseFieldEditRow">
+                          <span className="caseFieldLabel">{label}</span>
                           <input
                             autoFocus
                             type="text"
@@ -4479,40 +4716,40 @@ function BatchCaseDetailPage({
                               if (e.key === "Enter") handleFieldSave();
                               else if (e.key === "Escape") cancelFieldEdit();
                             }}
-                            style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "2px 6px", border: "1px solid var(--primary,#2563eb)", borderRadius: 6, outline: "none" }}
+                            className="caseFieldInput"
                           />
                           <button type="button" title="저장 (Enter)" disabled={savingField} onClick={handleFieldSave}
-                            style={{ background: "none", border: "none", cursor: savingField ? "default" : "pointer", color: "var(--color-success,#059669)", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>
+                            className="caseIconButton isSave">
                             {savingField ? "⏳" : "✓"}
                           </button>
                           <button type="button" title="취소 (Esc)" disabled={savingField} onClick={cancelFieldEdit}
-                            style={{ background: "none", border: "none", cursor: savingField ? "default" : "pointer", color: "var(--text-muted,#9ca3af)", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>
+                            className="caseIconButton isCancel">
                             ✕
                           </button>
                         </div>
                         {editError && (
-                          <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--color-error,#dc2626)" }}>{editError}</p>
+                          <p className="caseFieldError">{editError}</p>
                         )}
                       </div>
                     );
                   }
                   return (
                     <div key={label}
-                      style={{ display: "flex", justifyContent: "space-between", gap: 8, background: isHighlighted ? "#dbeafe" : undefined, borderRadius: 6, transition: "background 0.18s ease" }}>
-                      <span style={{ color: "var(--text-muted,#9ca3af)", flexShrink: 0 }}>{label}</span>
+                      className={`caseFieldRow${isHighlighted ? " isHighlighted" : ""}`}>
+                      <span className="caseFieldLabel">{label}</span>
                       <span
                         title={editable ? "클릭하여 수정" : undefined}
                         onClick={editable ? () => startFieldEdit(apiField) : undefined}
-                        style={{ color: alertMissing || invalid ? "var(--color-error,#dc2626)" : (unknown ? "var(--text-muted,#9ca3af)" : undefined), fontWeight: alertMissing || invalid ? 600 : undefined, textAlign: "right", wordBreak: "break-all", cursor: editable ? "pointer" : undefined }}>
+                        className={`caseFieldValue${alertMissing || invalid ? " isMissing" : (unknown ? " isUnknown" : "")}${editable ? " isEditable" : ""}`}>
                         {unknown ? (required ? "⚠ 미입력" : "—") : val}
                         {invalid && (
-                          <span title={v.detail} style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "#fff", background: "var(--color-error,#dc2626)", borderRadius: 4, padding: "1px 5px", cursor: "help" }}>⚠ 검증실패</span>
+                          <span title={v.detail} className="caseBadgeInvalid">⚠ 검증실패</span>
                         )}
                         {unverified && (
-                          <span title={v.detail} style={{ marginLeft: 6, fontSize: 10, color: "var(--text-muted,#9ca3af)", border: "1px solid var(--line,#e5e7eb)", borderRadius: 4, padding: "1px 5px", cursor: "help" }}>미검증</span>
+                          <span title={v.detail} className="caseBadgeUnverified">미검증</span>
                         )}
                         {editable && (
-                          <span aria-hidden="true" style={{ marginLeft: 5, fontSize: 10, color: "var(--text-muted,#c7ccd4)" }}>✎</span>
+                          <span aria-hidden="true" className="caseEditHint">✎</span>
                         )}
                       </span>
                     </div>
@@ -4523,32 +4760,32 @@ function BatchCaseDetailPage({
               })()}
           </div>
 
-          <hr style={{ border: "none", borderTop: "1px solid var(--line,#e5e7eb)", margin: 0 }} />
+          <hr className="caseDivider" />
 
           {/* 활동 타임라인 */}
           <div>
             <button
               type="button"
               onClick={() => setShowTimeline((prev) => !prev)}
-              style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", padding: 0, background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted,#9ca3af)", letterSpacing: "0.08em", marginBottom: showTimeline ? 8 : 0 }}
+              className={`caseTimelineToggle caseKicker${showTimeline ? " isOpen" : ""}`}
             >
               <span>활동 타임라인 ({activities.length}건)</span>
-              <span style={{ fontSize: 9 }}>{showTimeline ? "▾" : "▸"}</span>
+              <span className="caseTimelineCaret">{showTimeline ? "▾" : "▸"}</span>
             </button>
             {showTimeline && (
               activities.length === 0 ? (
-                <p style={{ fontSize: 12, color: "var(--text-muted,#9ca3af)", margin: 0 }}>활동 내역 없음</p>
+                <p className="caseMutedText">활동 내역 없음</p>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="caseTimelineList">
                   {activities.map((a, i) => {
-                    const color = a.type === "CREATED" ? "var(--text-muted,#9ca3af)"
-                      : a.type === "SUPPLEMENT_REQUESTED" ? "var(--color-warning,#d97706)"
-                      : a.type === "STUDENT_UPLOADED" ? "var(--color-success,#059669)"
-                      : "var(--primary,#2563eb)";
+                    const tone = a.type === "CREATED" ? ""
+                      : a.type === "SUPPLEMENT_REQUESTED" ? " isWarning"
+                      : a.type === "STUDENT_UPLOADED" ? " isSuccess"
+                      : " isPrimary";
                     return (
-                      <div key={i} style={{ paddingLeft: 10, borderLeft: `2px solid ${color}` }}>
-                        <div style={{ fontSize: 10, color: "var(--text-muted,#9ca3af)" }}>{a.time} · {a.actor}</div>
-                        <div style={{ fontSize: 12, lineHeight: 1.35 }}>{a.description}</div>
+                      <div key={i} className={`caseTimelineItem${tone}`}>
+                        <div className="caseTimelineMeta">{a.time} · {a.actor}</div>
+                        <div className="caseTimelineDesc">{a.description}</div>
                       </div>
                     );
                   })}
@@ -4557,16 +4794,16 @@ function BatchCaseDetailPage({
             )}
           </div>
 
-          <div style={{ flex: 1 }} />
+          <div className="caseRailSpacer" />
 
           {/* 보완 요청 버튼 */}
           {!showPanel && (
-            <button type="button" className="primaryButton" style={{ width: "100%", fontSize: 13 }} onClick={() => setShowPanel(true)}>
+            <button type="button" className="primaryButton caseFooterAction" onClick={() => setShowPanel(true)}>
               보완 요청 작성
             </button>
           )}
           {showPanel && (
-            <button type="button" className="secondaryButton" style={{ width: "100%", fontSize: 13 }} onClick={() => setShowPanel(false)}>
+            <button type="button" className="secondaryButton caseFooterAction" onClick={() => setShowPanel(false)}>
               보완 요청 닫기
             </button>
           )}
@@ -4629,31 +4866,31 @@ function UploadProcessingSteps({ batch }) {
         {UPLOAD_PIPELINE_STEPS.map((step, i) => {
           const state  = failed && i > 0 ? "upcoming" : states[i];
           const isLast = i === UPLOAD_PIPELINE_STEPS.length - 1;
-          const lineColor = states[i + 1] === "upcoming" ? "var(--line,#e5e7eb)" : "var(--primary,#2563eb)";
+          const lineColor = states[i + 1] === "upcoming" ? "var(--line)" : "var(--primary)";
           return (
             <div key={step.key} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-                <div style={{ flex: 1, height: 2, background: i === 0 ? "transparent" : state === "upcoming" ? "var(--line,#e5e7eb)" : "var(--primary,#2563eb)" }} />
+                <div style={{ flex: 1, height: 2, background: i === 0 ? "transparent" : state === "upcoming" ? "var(--line)" : "var(--primary)" }} />
                 <div style={{
                   width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 13, fontWeight: 700, border: "2px solid",
-                  background: state === "done" ? "var(--primary,#2563eb)" : state === "current" ? "#fff" : "var(--surface-2,#f3f4f6)",
-                  borderColor: state === "upcoming" ? "var(--line,#e5e7eb)" : "var(--primary,#2563eb)",
-                  color: state === "done" ? "#fff" : state === "current" ? "var(--primary,#2563eb)" : "var(--text-muted,#9ca3af)",
+                  background: state === "done" ? "var(--primary)" : state === "current" ? "#fff" : "var(--surface-muted)",
+                  borderColor: state === "upcoming" ? "var(--line)" : "var(--primary)",
+                  color: state === "done" ? "#fff" : state === "current" ? "var(--primary)" : "var(--text-muted)",
                 }}>
                   {state === "done" ? "✓" : state === "current" ? (
-                    <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid var(--primary,#2563eb)", borderTopColor: "transparent", display: "inline-block", animation: "pipelineSpin 0.8s linear infinite" }} />
+                    <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid var(--primary)", borderTopColor: "transparent", display: "inline-block", animation: "pipelineSpin 0.8s linear infinite" }} />
                   ) : i + 1}
                 </div>
                 <div style={{ flex: 1, height: 2, background: isLast ? "transparent" : lineColor }} />
               </div>
               <div style={{ textAlign: "center", marginTop: 6, padding: "0 2px" }}>
-                <div style={{ fontSize: 12, fontWeight: state === "current" ? 700 : 500, color: state === "upcoming" ? "var(--text-muted,#9ca3af)" : state === "current" ? "var(--primary,#2563eb)" : "var(--text,#111)" }}>
+                <div style={{ fontSize: 12, fontWeight: state === "current" ? 700 : 500, color: state === "upcoming" ? "var(--text-muted)" : state === "current" ? "var(--primary)" : "var(--text-strong)" }}>
                   {step.label}
                 </div>
                 {state === "current" && (
-                  <div style={{ fontSize: 11, color: "var(--text-secondary,#6b7280)", marginTop: 2, lineHeight: 1.3 }}>{step.desc}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-main)", marginTop: 2, lineHeight: 1.3 }}>{step.desc}</div>
                 )}
               </div>
             </div>
@@ -4661,10 +4898,10 @@ function UploadProcessingSteps({ batch }) {
         })}
       </div>
       {allDone && !failed && (
-        <p style={{ marginTop: 10, fontSize: 12, color: "var(--success,#059669)", textAlign: "center" }}>✓ 모든 단계 완료</p>
+        <p style={{ marginTop: 10, fontSize: 12, color: "var(--success)", textAlign: "center" }}>✓ 모든 단계 완료</p>
       )}
       {failed && (
-        <p style={{ marginTop: 10, fontSize: 12, color: "var(--error,#dc2626)", textAlign: "center" }}>처리 중 오류가 발생했습니다.</p>
+        <p style={{ marginTop: 10, fontSize: 12, color: "var(--danger)", textAlign: "center" }}>처리 중 오류가 발생했습니다.</p>
       )}
     </div>
   );
@@ -4777,7 +5014,7 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
                 marginLeft: 10,
                 fontSize: "0.8rem",
                 fontWeight: 400,
-                color: "var(--text-muted, #9ca3af)",
+                color: "var(--text-muted)",
                 verticalAlign: "middle",
               }}
             >
@@ -4854,16 +5091,16 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
         <UploadProcessingSteps batch={batch} />
         {isRunning && (
           <div style={{ marginTop: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", fontSize: "0.8125rem", color: "var(--text-secondary,#6b7280)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", fontSize: "0.8125rem", color: "var(--text-main)" }}>
               <span>{progressTotal > 0 ? `파일 ${progressDone} / ${progressTotal}개 처리됨` : `${batch.processingFileCount || 0}개 파일 분석 대기 중`}</span>
               {progressTotal > 0 && <span>{progressPct}%</span>}
             </div>
-            <div style={{ height: "6px", background: "var(--color-surface-2, #e5e7eb)", borderRadius: "4px", overflow: "hidden" }}>
+            <div style={{ height: "6px", background: "var(--surface-muted)", borderRadius: "4px", overflow: "hidden" }}>
               <div
                 style={{
                   height: "100%",
                   borderRadius: "4px",
-                  background: "var(--color-primary, #2563eb)",
+                  background: "var(--primary)",
                   width: progressTotal > 0 ? `${progressPct}%` : "100%",
                   transition: "width 0.5s ease",
                   animation: progressTotal === 0 ? "pulse 1.5s ease-in-out infinite" : "none",
@@ -4899,7 +5136,9 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
         const REVIEW_FIELD_LABEL = {
           nationality: "국적", date_of_birth: "생년월일", passport_number: "여권번호",
           student_name: "이름", alien_registration_number: "외국인등록번호",
-          address: "주소", phone_number: "전화번호",
+          address: "주소", phone_number: "전화번호", gender: "성별",
+          enrollment_passport_number: "재학증명서 여권번호",
+          enrollment_birth_date: "재학증명서 생년월일",
         };
         // 우선순위 등급: 필수 신원(1) > 누락(1.5) > 전화(2) > 주소(3) > 기타 서류검수(5)
         const FIELD_TIER = {
@@ -4915,12 +5154,12 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
         };
         // 통합 이슈 칩: 추출(신원값) + 누락 + 기타 서류검수를 한 곳에 모아 보여준다.
         const toneByTier = (tier) => tier <= 1
-          ? { bg: "var(--color-error-soft, #fee2e2)", fg: "var(--color-error, #991b1b)", bold: true }
+          ? { bg: "var(--danger-soft)", fg: "var(--danger)", bold: true }
           : tier < 2
             ? { bg: "#ffedd5", fg: "#9a3412", bold: true }
             : tier === 2
               ? { bg: "#ffedd5", fg: "#9a3412", bold: false }
-              : { bg: "var(--color-warning-soft, #fef3c7)", fg: "var(--color-warning, #92400e)", bold: false };
+              : { bg: "var(--warning-soft)", fg: "var(--warning)", bold: false };
         const caseIssues = (c) => {
           const items = extractionItems(c).map((it) => ({
             label: `${it.label}${it.status === "invalid" ? " ⚠" : " ?"}`, detail: it.detail, tier: it.tier,
@@ -4949,8 +5188,8 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
                 <tr key={c.id}>
                   <td data-label="학생명">{c.studentName}</td>
                   <td data-label="국적">{c.nationality}</td>
-                  <td data-label="신청 타입">{c.applicationType}</td>
-                  <td data-label="제출">{c.submittedCount}건</td>
+                  <td data-label="신청 타입" style={{ whiteSpace: "nowrap", verticalAlign: "middle" }}>{c.applicationType}</td>
+                  <td data-label="제출" style={{ whiteSpace: "nowrap", verticalAlign: "middle" }}>{c.submittedCount}건</td>
                   <td data-label="서류 현황">
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                       {c.documents.map((doc) => (
@@ -4961,8 +5200,8 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
                             padding: "2px 6px",
                             borderRadius: "4px",
                             fontSize: "0.75rem",
-                            background: doc.status === "제출" ? "var(--color-success-soft, #d1fae5)" : "var(--color-warning-soft, #fef3c7)",
-                            color: doc.status === "제출" ? "var(--color-success, #065f46)" : "var(--color-warning, #92400e)",
+                            background: doc.status === "제출" ? "var(--success-soft)" : "var(--warning-soft)",
+                            color: doc.status === "제출" ? "var(--success)" : "var(--warning)",
                           }}
                         >
                           {doc.name}
@@ -4970,16 +5209,16 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
                       ))}
                     </div>
                   </td>
-                  <td>
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                      <button type="button" className="secondaryButton" style={{ fontSize: "0.8rem", padding: "4px 10px" }} onClick={() => onOpenCaseDetail(c.id)}>
+                  <td style={{ verticalAlign: "middle" }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center" }}>
+                      <button type="button" className="secondaryButton" style={{ fontSize: "0.8rem", padding: "4px 10px", whiteSpace: "nowrap" }} onClick={() => onOpenCaseDetail(c.id)}>
                         상세보기
                       </button>
                       {showExclude && onToggleExclude && (
                         <button
                           type="button"
                           className="secondaryButton"
-                          style={{ fontSize: "0.8rem", padding: "4px 10px", color: "var(--color-error, #dc2626)" }}
+                          style={{ fontSize: "0.8rem", padding: "4px 10px", color: "var(--danger)", whiteSpace: "nowrap" }}
                           onClick={() => onToggleExclude(c.id, false, batch.id)}
                         >
                           제외
@@ -4996,10 +5235,10 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
         return (
           <>
             {reviewCases.length > 0 && (
-              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary, #2563eb)" }}>
+              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary)" }}>
                 <div className="sectionHeading" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                   <div>
-                    <h2>검토 필요 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--primary, #2563eb)", marginLeft: 6 }}>{reviewCases.length}명</span></h2>
+                    <h2>검토 필요 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--primary)", marginLeft: 6 }}>{reviewCases.length}명</span></h2>
                     <p>추출값(국적·생년월일 등)과 서류를 한 화면에서 확인·수정한 뒤 <b>[검토 완료]</b>를 누르면 학생 목록에 추가됩니다. 검토 전에는 목록에 나타나지 않습니다.</p>
                   </div>
                   <button
@@ -5045,27 +5284,27 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
               </section>
             )}
             {reflectedCases.length > 0 && (
-              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--color-success, #059669)" }}>
+              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--success)" }}>
                 <div className="sectionHeading">
-                  <h2>학생 목록 반영됨 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--color-success, #059669)", marginLeft: 6 }}>{reflectedCases.length}명</span></h2>
+                  <h2>학생 목록 반영됨 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--success)", marginLeft: 6 }}>{reflectedCases.length}명</span></h2>
                   <p>검토가 끝나 학생 목록(대시보드)에 반영된 학생입니다. 잘못 들어갔으면 <b>[제외]</b>로 목록에서 뺄 수 있습니다.</p>
                 </div>
                 <CaseTable cases={reflectedCases} showExclude />
               </section>
             )}
             {failedCases.length > 0 && (
-              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--color-error, #dc2626)" }}>
+              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--danger)" }}>
                 <div className="sectionHeading">
-                  <h2>추출 실패 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--color-error, #dc2626)", marginLeft: 6 }}>{failedCases.length}명</span></h2>
+                  <h2>추출 실패 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--danger)", marginLeft: 6 }}>{failedCases.length}명</span></h2>
                   <p>텍스트 추출에 실패했습니다. 재처리하거나 상세에서 수동으로 정보를 확인하세요.</p>
                 </div>
                 <CaseTable cases={failedCases} showExclude={false} />
               </section>
             )}
             {excludedCases.length > 0 && (
-              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--text-muted, #9ca3af)" }}>
+              <section className="surfaceCard" style={{ borderLeft: "3px solid var(--text-muted)" }}>
                 <div className="sectionHeading">
-                  <h2>제외된 케이스 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--text-muted, #9ca3af)", marginLeft: 6 }}>{excludedCases.length}명</span></h2>
+                  <h2>제외된 케이스 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--text-muted)", marginLeft: 6 }}>{excludedCases.length}명</span></h2>
                   <p>학생 목록(대시보드)에서 제외된 케이스입니다. <b>[추가]</b>를 누르면 다시 학생 목록에 포함됩니다.</p>
                 </div>
                 <table className="dataTable">
@@ -5077,17 +5316,17 @@ function AgencyUploadHistoryDetailPage({ batch, onBack, backLabel = "업로드 �
                       <tr key={c.id} style={{ opacity: 0.6 }}>
                         <td data-label="학생명">{c.studentName}</td>
                         <td data-label="국적">{c.nationality}</td>
-                        <td data-label="신청 타입">{c.applicationType}</td>
-                        <td>
-                          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                            <button type="button" className="secondaryButton" style={{ fontSize: "0.8rem", padding: "4px 10px" }} onClick={() => onOpenCaseDetail(c.id)}>
+                        <td data-label="신청 타입" style={{ whiteSpace: "nowrap", verticalAlign: "middle" }}>{c.applicationType}</td>
+                        <td style={{ verticalAlign: "middle" }}>
+                          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center" }}>
+                            <button type="button" className="secondaryButton" style={{ fontSize: "0.8rem", padding: "4px 10px", whiteSpace: "nowrap" }} onClick={() => onOpenCaseDetail(c.id)}>
                               상세보기
                             </button>
                             {onToggleExclude && (
                               <button
                                 type="button"
                                 className="primaryButton"
-                                style={{ fontSize: "0.8rem", padding: "4px 10px" }}
+                                style={{ fontSize: "0.8rem", padding: "4px 10px", whiteSpace: "nowrap" }}
                                 onClick={() => onToggleExclude(c.id, true, batch.id)}
                               >
                                 추가
@@ -5453,6 +5692,36 @@ export default function App() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, session, hasActiveListBatch]);
+
+  // 업로드 내역 진입 시 목록을 즉시 재조회한다. 재조회 전에는 낡은 state의 "진행 중" 배치가
+  // 진행 단계 표시를 잠깐 그렸다 지우는 깜빡임이 생기므로, 갱신 완료 여부를 함께 추적해
+  // 목록 화면이 진행 단계를 신선한 데이터로만 그리게 한다.
+  const [isBatchListFresh, setIsBatchListFresh] = useState(false);
+  useEffect(() => {
+    if (!session?.isAuthenticated || page !== "agency-upload-history") {
+      return;
+    }
+    let cancelled = false;
+    setIsBatchListFresh(false);
+    fetchAgencyUploadBatches()
+      .then((batches) => {
+        if (cancelled) return;
+        setAgencyUploadBatches(
+          Array.isArray(batches)
+            ? batches.map((batch) => normalizeAgencyUploadBatch(batch))
+            : [],
+        );
+        setIsBatchListFresh(true);
+      })
+      .catch(() => {
+        // 조회 실패 시엔 기존 목록 기준으로라도 진행 단계를 보여준다
+        if (!cancelled) setIsBatchListFresh(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, session]);
 
   const selectedStudentApplication =
     studentApplications.find((application) => application.id === studentApplicationId) ??
@@ -6017,8 +6286,16 @@ export default function App() {
           onSearchFieldChange={setSchoolSearchField}
           onStatusFilterChange={setSchoolStatusFilter}
           onVisaFilterChange={setSchoolVisaFilter}
+          onRefresh={async () => {
+            const rows = await fetchSchoolStudents();
+            setSchoolStudents(rows);
+          }}
         />
       );
+    }
+
+    if (page === "school-download") {
+      return <SchoolDownloadPage students={schoolStudents} />;
     }
 
     if (page === "agency-dashboard") {
@@ -6116,6 +6393,7 @@ export default function App() {
       return (
         <AgencyUploadHistoryPage
           batches={agencyUploadBatches}
+          showProcessingSteps={isBatchListFresh}
           onOpenDetail={openAgencyUploadBatchDetail}
           onBack={() => goBack(originPage ?? "agency-dashboard")}
           backLabel={pageLabel(originPage ?? "agency-dashboard")}
@@ -6153,11 +6431,7 @@ export default function App() {
 
     if (page === "agency-download") {
       return (
-        <AgencyDownloadPage
-          session={session}
-          schools={schools}
-          batches={agencyUploadBatches}
-        />
+        <AgencyDownloadPage schools={schools} />
       );
     }
 

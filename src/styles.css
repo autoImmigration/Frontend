@@ -1284,34 +1284,6 @@ select:focus {
   overflow: hidden;
 }
 
-.scanFrame {
-  padding: 18px;
-  border-bottom: 1px solid var(--line);
-  background: #eef5ff;
-}
-
-.scanPaper {
-  min-height: 230px;
-  padding: 18px 18px 16px;
-  border: 1px solid #d8e3f4;
-  border-radius: 12px;
-  background: #ffffff;
-  display: grid;
-  align-content: start;
-  gap: 10px;
-}
-
-.scanPaper span,
-.scanPaper small {
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.scanPaper strong {
-  font-size: 18px;
-  line-height: 1.3;
-}
-
 .scanLines {
   display: grid;
   gap: 8px;
@@ -1579,12 +1551,23 @@ select:focus {
     padding: 24px 20px;
   }
 
-  .roleTabs,
   .ruleGrid,
   .detailInfoGrid,
   .scanGrid,
   .jobMetricGrid {
     grid-template-columns: 1fr;
+  }
+
+  /* 역할 탭(학생/학교/유학원)은 짧으므로 모바일에서도 한 줄(3열) 유지 */
+  .roleTabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .roleTab {
+    min-height: 40px;
+    padding: 0 4px;
+    font-size: 14px;
   }
 
   .summaryStrip {
@@ -1749,6 +1732,498 @@ select:focus {
   }
 }
 
+/* 서류 간편 필터 — 모바일 전용(데스크톱은 전체 목록 노출) */
+.docFilterBar {
+  display: none;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.docFilterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.docFilterChip.isActive {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.docFilterCount {
+  font-size: 11px;
+  font-weight: 700;
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* 학생 포털 래퍼 — 감싸기 전 .pageStack이 주던 섹션 간격을 대신 유지 */
+.studentPortal {
+  display: grid;
+  gap: 18px;
+}
+
+/* 내 정보 편집 — 전화번호·외국인등록번호(한 줄) / 주소(단독) / 저장(우측) */
+.profileEditGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.profileEditGrid .profileAddressField {
+  grid-column: 1 / -1;
+}
+
+.profileEditGrid .profileSaveRow {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 내 정보 헤딩 — 제목 + 수정하기(우측) */
+.myInfoHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.myInfoEditButton {
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+/* 내 신청 목록 상세보기 — 셀 수직 중앙 정렬.
+   .tableActionCell는 기본 display:flex라 table row 높이에 스트레치되지 않아
+   vertical-align이 먹지 않는다. 학생 표는 버튼이 하나(상세 보기)뿐이므로
+   일반 table-cell로 되돌려 다른 텍스트 셀과 동일하게 수직 중앙 정렬한다. */
+.studentPortal .studentAppTable td,
+.studentPortal .studentAppTable .tableActionCell {
+  vertical-align: middle;
+}
+
+.studentPortal .studentAppTable .tableActionCell {
+  display: table-cell;
+  text-align: right;
+}
+
+/* 공용 모달 */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.modalCard {
+  width: min(460px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modalHeader h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.modalClose {
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* 업로드 — 박스 없이 클릭 가능한 색상 텍스트(링크 스타일). 미제출은 눈에 띄게 다른 색. */
+.uploadLink {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.uploadLink.isNeeded {
+  color: var(--danger);
+}
+
+.uploadLink:hover {
+  text-decoration: underline;
+}
+
+/* 검수 필요 사유 — 문서 행 바로 아래 구분 없이 붙는 빨간 작은 글씨 한 줄 */
+.docReasonRow,
+.docReasonRow:hover {
+  background: var(--warning-soft);
+}
+
+/* 사유가 붙는 문서 행은 아래 구분선을 없애 사유와 한 덩어리로 보이게 */
+.dataTable tbody tr.hasReason td {
+  border-bottom: 0;
+}
+
+.docReasonRow td {
+  padding: 0 16px 10px !important;
+  border-bottom: 0;
+}
+
+.docReasonText {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--danger);
+  word-break: keep-all;
+}
+
+/* 상세 헤더 뒤로가기 화살표 — 브레드크럼 왼쪽에 위치 */
+.backArrowButton {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.backArrowButton:hover {
+  background: var(--surface-muted);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* 뒤로가기 화살표가 있으면 브레드크럼/제목 왼쪽에 나란히 정렬 (모바일 column 규칙보다 우선) */
+.pageHeader:has(.backArrowButton) {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.pageHeader:has(.backArrowButton) .pageHeaderText {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 학생 포털 모바일 최적화 (≤640px, 데스크톱 미변경) ──────── */
+@media (max-width: 640px) {
+  .docFilterBar {
+    display: flex;
+  }
+
+  /* 학생은 네비 항목이 하나뿐 — 모바일에선 중복 버튼 숨김 */
+  .singleNav .sidebar {
+    display: none;
+  }
+
+  /* 앱바 간소화 — 360px에서 잘리던 섹션명·사용자 텍스트 숨김(페이지 제목이 대신 노출) */
+  .appBar {
+    padding: 0 12px;
+  }
+
+  .appBarSection,
+  .appBarUser {
+    display: none;
+  }
+
+  /* 섹션명을 숨기면 학생·로그아웃이 로고 옆에 붙으므로 오른쪽으로 밀어 우측 정렬 */
+  .appBarRight {
+    margin-left: auto;
+  }
+
+  /* 신청 현황: 신청 목록을 내 정보보다 먼저 노출 */
+  .studentPortal .myAppsSection {
+    order: 1;
+  }
+
+  .studentPortal .myInfoSection {
+    order: 2;
+  }
+
+  /* 상세 요약: 신청번호·신청일 숨기고 문서 제출·현재 상태만 */
+  .studentPortal .summaryStrip article:nth-child(1),
+  .studentPortal .summaryStrip article:nth-child(2) {
+    display: none;
+  }
+
+  /* 서류 목록: 카드 대신 압축 표 — 분류·마지막 업로드 열 숨김, 화면 폭에 맞춤 */
+  .studentPortal .studentDocTable {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 11.5px;
+  }
+
+  .studentPortal .studentDocTable th,
+  .studentPortal .studentDocTable td {
+    padding: 7px 4px;
+    vertical-align: middle;
+    word-break: break-word;
+    white-space: normal;
+  }
+
+  .studentPortal .studentDocTable th:nth-child(1) { width: 43%; }
+  .studentPortal .studentDocTable th:nth-child(3) { width: 23%; }
+  .studentPortal .studentDocTable th:nth-child(5) { width: 11%; }
+  .studentPortal .studentDocTable th:nth-child(6) { width: 23%; }
+
+  /* 좁은 칸 대응: 배지 패딩 축소 + 제출/미제출 색상 배지 균일 폭 → 끝 정렬 */
+  .studentPortal .studentDocTable .status {
+    padding: 0 6px;
+    min-height: 26px;
+  }
+
+  .studentPortal .studentDocTable .statusSuccess,
+  .studentPortal .studentDocTable .statusNeutral {
+    min-width: 50px;
+  }
+
+  /* 검수 사유 행은 열 폭 규칙에서 제외 — 전체폭 유지 */
+  .studentPortal .studentDocTable .docReasonRow td {
+    width: auto;
+    text-align: left;
+  }
+
+  .studentPortal .studentDocTable th:nth-child(2),
+  .studentPortal .studentDocTable td[data-label="분류"],
+  .studentPortal .studentDocTable th:nth-child(4),
+  .studentPortal .studentDocTable td[data-label="마지막 업로드"] {
+    display: none;
+  }
+
+  .studentPortal .studentDocTable th:nth-child(3),
+  .studentPortal .studentDocTable td[data-label="상태"],
+  .studentPortal .studentDocTable th:nth-child(5),
+  .studentPortal .studentDocTable td[data-label="제출본"],
+  .studentPortal .studentDocTable th:nth-child(6),
+  .studentPortal .studentDocTable td[data-label="업로드"] {
+    text-align: center;
+    white-space: normal;
+  }
+
+  /* 상태는 왼쪽 정렬 — 배지(제출/미제출) 박스 시작점과 '검수 필요' 텍스트 시작점을 일치 */
+  .studentPortal .studentDocTable th:nth-child(3),
+  .studentPortal .studentDocTable td[data-label="상태"] {
+    text-align: left;
+  }
+
+  /* 업로드 라벨/버튼이 셀 폭을 넘지 않게 — 셀 안에서 줄바꿈 */
+  .studentPortal .studentDocTable td[data-label="업로드"] label {
+    display: block;
+    width: 100%;
+  }
+
+  .studentPortal .studentDocTable .tableLinkButton,
+  .studentPortal .studentDocTable .primaryButton,
+  .studentPortal .studentDocTable .secondaryButton {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 10.5px;
+    padding: 4px 3px;
+    min-height: 0;
+    white-space: normal;
+    word-break: keep-all;
+    line-height: 1.25;
+  }
+
+  /* 내 신청 목록: 카드 대신 압축 표 — 신청유형·신청방식·비고 열 숨김, 화면 폭에 맞춤 */
+  .studentPortal .studentAppTable {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 11.5px;
+  }
+
+  .studentPortal .studentAppTable th,
+  .studentPortal .studentAppTable td {
+    padding: 8px 4px;
+    vertical-align: middle;
+    word-break: break-word;
+  }
+
+  .studentPortal .studentAppTable th:nth-child(2) { width: 22%; }
+  .studentPortal .studentAppTable th:nth-child(4) { width: 26%; }
+  .studentPortal .studentAppTable th:nth-child(5) { width: 22%; }
+  .studentPortal .studentAppTable th:nth-child(7) { width: 30%; }
+
+  /* 숨긴 열 자리에 밑줄이 끊겨 보이지 않게 — 행 단위 밑줄로 통일 */
+  .studentPortal .studentDocTable tbody tr,
+  .studentPortal .studentAppTable tbody tr {
+    border-bottom: 1px solid #e8eef6;
+  }
+
+  .studentPortal .studentDocTable td,
+  .studentPortal .studentAppTable td {
+    border-bottom: 0;
+  }
+
+  /* 사유가 붙는 문서 행은 밑줄 제거 — 사유 줄과 한 덩어리(구분 없음) */
+  .studentPortal .studentDocTable tbody tr.hasReason {
+    border-bottom: 0;
+  }
+
+  .studentPortal .studentAppTable th:nth-child(1),
+  .studentPortal .studentAppTable td[data-label="신청 유형"],
+  .studentPortal .studentAppTable th:nth-child(3),
+  .studentPortal .studentAppTable td[data-label="신청 방식"],
+  .studentPortal .studentAppTable th:nth-child(6),
+  .studentPortal .studentAppTable td[data-label="비고"] {
+    display: none;
+  }
+
+  .studentPortal .studentAppTable td[data-label="상태"],
+  .studentPortal .studentAppTable td[data-label="작업"] {
+    text-align: center;
+    white-space: normal;
+  }
+
+  .studentPortal .studentAppTable .tableLinkButton {
+    display: inline-block;
+    width: auto;
+    box-sizing: border-box;
+    font-size: 11px;
+    padding: 0;
+    min-height: 0;
+    height: auto;
+    vertical-align: middle;
+    white-space: nowrap;
+    word-break: keep-all;
+    line-height: 1.2;
+  }
+
+  /* 상태 배지 텍스트도 단어 중간에서 끊기지 않게 */
+  .studentPortal .studentDocTable td[data-label="상태"],
+  .studentPortal .studentAppTable td[data-label="상태"] {
+    word-break: keep-all;
+  }
+
+  .studentPortal .pageHeader h1 {
+    font-size: 20px;
+  }
+
+  .studentPortal .pageDescription {
+    font-size: 13px;
+  }
+
+  .studentPortal .sectionHeading h2 {
+    font-size: 16px;
+  }
+
+  .studentPortal .sectionHeading p {
+    font-size: 12px;
+  }
+
+  .studentPortal .surfaceCard {
+    padding: 14px;
+  }
+
+  /* 내 정보 — 한 줄에 2개씩 */
+  .studentPortal .studentInfoGrid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px 12px !important;
+    font-size: 12px !important;
+  }
+
+  /* 요약 스트립 — 2x2 압축 */
+  .studentPortal .summaryStrip {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .studentPortal .summaryItem {
+    padding: 10px 12px;
+  }
+
+  .studentPortal .summaryItem > span {
+    font-size: 11px;
+  }
+
+  .studentPortal .summaryItem > strong {
+    font-size: 15px;
+  }
+
+  .studentPortal .summaryItem > p {
+    display: none;
+  }
+
+  /* 스택 카드 압축 — 한눈에 여러 건 */
+  .studentPortal .stackedTable tbody {
+    gap: 8px;
+  }
+
+  .studentPortal .stackedTable tr {
+    padding: 4px 12px;
+  }
+
+  .studentPortal .stackedTable td {
+    grid-template-columns: minmax(72px, 0.6fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+
+  .studentPortal .stackedTable td::before {
+    font-size: 10px;
+  }
+
+  /* 덜 중요한 셀은 모바일에서 숨김 — 신청 방식/분류/마지막 업로드/비고 */
+  .studentPortal .stackedTable td[data-label="신청 방식"],
+  .studentPortal .stackedTable td[data-label="분류"],
+  .studentPortal .stackedTable td[data-label="마지막 업로드"],
+  .studentPortal .stackedTable td[data-label="비고"] {
+    display: none;
+  }
+}
+
 @media (max-width: 520px) {
   .summaryStrip {
     grid-template-columns: 1fr;
@@ -1816,4 +2291,1347 @@ select:focus {
   color: var(--text-soft);
   font-size: 0.875rem;
   user-select: none;
+}
+
+/* ── 학교 학생 상세 — 목록 자리를 그대로 대체하는 카드 ─────────── */
+.schoolDetailCard {
+  padding: 0;
+  overflow: hidden;
+}
+
+.schoolDetailHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.schoolDetailTitle {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.schoolDetailTitle h2 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.schoolDetailMeta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.schoolDetailBadges {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.docCountChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid #cde5d4;
+  border-radius: 999px;
+  background: var(--success-soft);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+.docCountChip.hasMissing {
+  color: var(--danger);
+  border-color: #f3d1cd;
+  background: var(--danger-soft);
+}
+
+.schoolDetailState {
+  padding: 48px 24px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.schoolDetailState.isError {
+  color: var(--danger);
+}
+
+.schoolDetailSplit {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 280px;
+  min-height: 520px;
+}
+
+.schoolDocRail,
+.schoolInfoRail {
+  background: var(--surface-muted);
+}
+
+.schoolDocRail {
+  border-right: 1px solid var(--line);
+  padding: 16px 14px 20px;
+}
+
+.schoolInfoRail {
+  border-left: 1px solid var(--line);
+  padding: 16px 20px 20px;
+}
+
+.railLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.railLabel .isMissing {
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+.railLabel .isComplete {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+.schoolDocList {
+  display: grid;
+  gap: 6px;
+}
+
+.schoolDocList .documentStatusButton .docName {
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 1.35;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.documentStatusButton.isMissing {
+  border-left: 3px solid var(--danger);
+}
+
+.docPageCount {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.schoolScanPane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 24px 24px;
+  background: var(--surface);
+}
+
+.scanToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scanToolbar strong {
+  font-size: 15px;
+}
+
+.scanNote {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.scanPageMeta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.scanPageChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scanPageChip {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--text-main);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.scanPageChip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.scanPageChip:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.scanPageChip.isActive {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.scanStage {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+/* 서류 원본 비율 그대로 — 카드 길이가 서류를 따라 늘어난다 */
+.schoolScanFrame {
+  width: min(100%, 520px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  cursor: zoom-in;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.schoolScanFrame img {
+  width: 100%;
+  height: auto;
+  max-height: none !important; /* StudentScanImage 인라인 76vh 제한 해제(학교 상세만) */
+}
+
+.schoolScanFrame:hover {
+  border-color: var(--primary);
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.12);
+}
+
+.scanEmpty {
+  width: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.scanEmpty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.infoItem {
+  display: grid;
+  gap: 3px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.infoItem:last-child {
+  border-bottom: none;
+}
+
+.infoLabel {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.infoValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1080px) {
+  .schoolDetailSplit {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .schoolDocRail {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .schoolInfoRail {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .scanStage {
+    min-height: 360px;
+  }
+}
+
+/* ── 테이블 위험 동작 버튼 ── */
+/* 파괴적 동작(학생 제외 등)을 일반 링크 버튼과 색으로 구분해 오클릭을 줄인다.
+   기존 .tableLinkButton 규칙은 수정하지 않고 여기서 오버라이드만 한다. */
+.tableLinkButton.isDanger {
+  color: var(--danger);
+  /* tableActionCell의 gap(12px)은 다른 테이블과 공유라 건드리지 않고,
+     버튼 자체 margin으로 일반 동작과의 간격만 보강한다. */
+  margin-left: 4px;
+}
+
+.tableLinkButton.isDanger:hover {
+  background: var(--danger-soft);
+  border-color: #f3d1cd;
+}
+
+.tableLinkButton.isDanger:focus-visible {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(192, 54, 44, 0.16);
+}
+
+/* ── 대시보드 요약 카드 클릭 ── */
+/* 클릭형 요약 카드: .summaryItem 이 button 으로 렌더될 때의 기본 스타일 보정 */
+button.summaryItemClickable {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  cursor: pointer;
+  width: 100%;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+button.summaryItemClickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+button.summaryItemClickable:active {
+  transform: translateY(0);
+}
+
+button.summaryItemClickable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 활성 필터 카드: primary 테두리 + 얇은 ring */
+button.summaryItemClickable.isActiveFilter {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16), 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
+/* 위험 톤 — toneWarning/toneSuccess 와 같은 패턴 (--danger #c0362c, --danger-soft #fdecea) */
+.summaryItem.toneDanger {
+  border-color: #f0c9c4;
+  background: linear-gradient(180deg, #fffbfa 0%, var(--danger-soft) 100%);
+}
+
+.summaryItem.toneDanger::before {
+  background: var(--danger);
+}
+
+.summaryItem.toneDanger strong {
+  color: var(--danger);
+}
+
+/* 유학원 대시보드 요약: 실패 카드 상시 노출로 5개 고정 → 5열 그리드 */
+.summaryStrip.agencySummary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* .summaryStrip.agencySummary 가 기존 .summaryStrip 미디어 규칙보다 구체적이므로
+   반응형 열 수를 여기서 다시 지정한다 */
+@media (max-width: 1180px) {
+  .summaryStrip.agencySummary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .summaryStrip.agencySummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .summaryStrip.agencySummary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── 유학원 케이스 상세 ── */
+
+.caseHeaderActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.caseQueueMeta {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.caseDetailSplit {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 260px;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.caseDocRail {
+  border-right: 1px solid var(--line);
+  background: var(--surface-muted);
+  display: flex;
+  flex-direction: column;
+}
+
+.caseRailHead {
+  margin-bottom: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.caseDocList {
+  margin-top: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.caseDocName {
+  display: block;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+.caseDocFile {
+  font-size: 12px;
+  margin-top: 2px;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.caseDocMain {
+  min-width: 0;
+}
+
+.caseUploadInlineButton {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  background: var(--primary-soft);
+  border: none;
+  border-top: 1px dashed var(--line);
+  cursor: pointer;
+  color: var(--primary);
+  text-align: left;
+  transition: background-color 0.18s ease;
+}
+
+.caseUploadInlineButton:hover {
+  background: #e3edfd;
+}
+
+.caseUploadInlineButton:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.4);
+}
+
+.caseOtherHead {
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  color: var(--text-soft);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.caseTidyToggle {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.caseTidyToggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.caseTidyToggle:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseTidyToggle.isActive {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.caseOtherItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.caseOtherItem.isChecked {
+  background: var(--primary-soft);
+}
+
+.caseOtherItem strong {
+  font-weight: 400;
+}
+
+.caseOtherBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.caseTidyCheckbox {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.caseBulkBar {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  background: var(--primary-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.caseBulkTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.caseBulkActions {
+  display: flex;
+  gap: 6px;
+}
+
+.caseBulkActions .primaryButton,
+.caseBulkActions .secondaryButton {
+  font-size: 12px;
+  padding: 6px 10px;
+  flex: 1;
+  white-space: nowrap;
+}
+
+.caseSelect {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text-strong);
+}
+
+.caseSelect:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseScanSelect {
+  width: auto;
+  flex: 1 1 120px;
+  min-width: 120px;
+}
+
+.caseErrorText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.caseSuccessText {
+  margin: 0;
+  font-size: 12px;
+  color: var(--success);
+}
+
+.caseMutedText {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.caseScanPane {
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+
+.caseScanStage {
+  flex: 1;
+}
+
+/* 서류 원본 비율 그대로 — 카드 길이가 서류를 따라 늘어난다 */
+.caseScanFrame {
+  width: min(100%, 520px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  cursor: zoom-in;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.caseScanFrame img {
+  width: 100%;
+  height: auto;
+}
+
+.caseScanFrame:hover {
+  border-color: var(--primary);
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.12);
+}
+
+.caseScanAssign {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caseScanAssignRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.caseScanAssignHint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.caseKicker {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+}
+
+.caseInfoRail {
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.caseSectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.caseIssueOk {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.caseIssueBad {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+.caseStatusRow {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.caseIssueList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.caseIssueList.isScrollable {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.caseIssueItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-left: 2px solid var(--danger);
+  border-radius: 0;
+  padding: 3px 4px 3px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-strong);
+  transition: background-color 0.18s ease;
+}
+
+.caseIssueItem:hover {
+  background: var(--surface-muted);
+}
+
+.caseIssueItem:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseIssueItem.isWarn {
+  border-left-color: var(--warning);
+}
+
+.caseIssueDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.caseIssueItem.isWarn .caseIssueDot {
+  background: var(--warning);
+}
+
+.caseIssueBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.caseIssueLabel {
+  font-weight: 600;
+}
+
+.caseIssueDetail {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.35;
+}
+
+.caseWideAction {
+  font-size: 11px;
+  padding: 4px 10px;
+  width: 100%;
+}
+
+.caseWideAction.isReady {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.caseDivider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0;
+}
+
+.caseLinkButton {
+  font-size: 11px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--primary);
+  padding: 0;
+}
+
+.caseLinkButton:hover {
+  text-decoration: underline;
+}
+
+.caseLinkButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  border-radius: 4px;
+}
+
+.caseFieldList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.caseFieldRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 8px;
+  transition: background-color 0.18s ease;
+}
+
+.caseFieldRow.isHighlighted,
+.caseFieldEditBox.isHighlighted {
+  background: #dbeafe;
+}
+
+.caseFieldEditBox {
+  border-radius: 8px;
+  transition: background-color 0.18s ease;
+}
+
+.caseFieldEditRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.caseFieldLabel {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.caseFieldValue {
+  text-align: right;
+  word-break: break-all;
+}
+
+.caseFieldValue.isEditable {
+  cursor: pointer;
+}
+
+.caseFieldValue.isMissing {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.caseFieldValue.isUnknown {
+  color: var(--text-soft);
+}
+
+.caseFieldInput {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  outline: none;
+}
+
+.caseFieldInput:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseIconButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.caseIconButton:disabled {
+  cursor: default;
+}
+
+.caseIconButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseIconButton.isSave {
+  color: var(--success);
+}
+
+.caseIconButton.isCancel {
+  color: var(--text-muted);
+}
+
+.caseFieldError {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.caseBadgeInvalid {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: help;
+}
+
+.caseBadgeUnverified {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: help;
+}
+
+.caseEditHint {
+  margin-left: 5px;
+  font-size: 10px;
+  color: var(--text-soft);
+}
+
+.caseTimelineToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 4px;
+}
+
+.caseTimelineToggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseTimelineToggle.isOpen {
+  margin-bottom: 8px;
+}
+
+.caseTimelineCaret {
+  font-size: 9px;
+}
+
+.caseTimelineList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.caseTimelineItem {
+  padding-left: 10px;
+  border-left: 2px solid var(--text-soft);
+}
+
+.caseTimelineItem.isWarning {
+  border-left-color: var(--warning);
+}
+
+.caseTimelineItem.isSuccess {
+  border-left-color: var(--success);
+}
+
+.caseTimelineItem.isPrimary {
+  border-left-color: var(--primary);
+}
+
+.caseTimelineMeta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.caseTimelineDesc {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.caseRailSpacer {
+  flex: 1;
+}
+
+.caseFooterAction {
+  width: 100%;
+  font-size: 13px;
+}
+
+/* 케이스 상세 — 모달 공통 */
+.caseModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.caseModalBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.caseModal {
+  position: relative;
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.caseModal.isWide {
+  width: min(640px, 95vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.caseModal.isNarrow {
+  width: min(440px, 95vw);
+}
+
+.caseModalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.caseModalTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.caseModalSub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.caseModalDesc {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.caseModalDesc strong {
+  color: var(--text-strong);
+}
+
+.caseModalClose {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1;
+  padding: 4px;
+  border-radius: 8px;
+  transition: color 0.18s ease;
+}
+
+.caseModalClose:hover {
+  color: var(--text-strong);
+}
+
+.caseModalClose:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.caseModalActions.hasTopGap {
+  margin-top: 16px;
+}
+
+.caseChecklistRows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.caseChecklistRow {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.caseChecklistRow.isChecked {
+  background: var(--primary-soft);
+  border-color: #bfdbfe;
+}
+
+.caseChecklistCheckbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.caseChecklistLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.caseChecklistLabel strong {
+  font-weight: 600;
+}
+
+.caseChecklistReason {
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  width: 200px;
+  background: #fff;
+  color: var(--text-strong);
+  outline: none;
+}
+
+.caseChecklistReason:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseChecklistReason:disabled {
+  background: var(--surface-muted);
+  color: var(--text-soft);
+}
+
+.caseModalField {
+  margin-bottom: 20px;
+}
+
+.caseModalFieldLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-main);
+}
+
+.caseTextarea {
+  width: 100%;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.caseTextarea:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.caseFileInput {
+  width: 100%;
+  font-size: 13px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+/* 케이스 상세 — 라이트박스 */
+.caseLightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+  overflow: hidden;
+}
+
+.caseLightboxClose {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.8rem;
+  cursor: pointer;
+  line-height: 1;
+  z-index: 1;
+  border-radius: 8px;
+}
+
+.caseLightboxClose:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.5);
+}
+
+.caseLightboxHint {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+}
+
+.caseLightboxCanvas {
+  max-width: 94vw;
+  max-height: 92vh;
+}
+
+@media (max-width: 1080px) {
+  .caseDetailSplit {
+    grid-template-columns: 1fr;
+  }
+
+  .caseDocRail {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .caseInfoRail {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}
+
+.caseSuccessText.hasBottomGap,
+.caseErrorText.hasBottomGap {
+  margin: 0 0 8px;
+}
+
+p.caseMutedText {
+  margin: 0;
+}
+
+/* .documentStatusButton p 그룹 규칙(구형)보다 우선해야 하는 파일명 줄 */
+.documentStatusButton .caseDocFile {
+  margin: 2px 0 0;
+  color: var(--text-soft);
+}
+
+/* ── 파일 목록 브레드크럼 ── */
+.fileBreadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 0.875rem;
+}
+
+.fileBreadcrumbItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fileBreadcrumbSep {
+  color: var(--line);
+  margin: 0 2px;
+}
+
+.fileBreadcrumbLink {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--primary);
+  font-size: inherit;
+  font-family: inherit;
+  border-radius: 4px;
+}
+
+.fileBreadcrumbLink:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.fileBreadcrumbCurrent {
+  color: var(--text-strong);
+  font-weight: 500;
 }

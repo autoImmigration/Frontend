@@ -17,6 +17,7 @@ export const ROUTES = [
   { page: "student-list", path: "/student", role: "student" },
 
   { page: "school-list", path: "/school/students", role: "school" },
+  { page: "school-download", path: "/school/download", role: "school" },
 
   // 구체적인 경로가 먼저 와야 한다 (/agency/batches/:batchId 가 케이스 경로를 가로채지 않도록)
   { page: "agency-batch-case-detail", path: "/agency/batches/:batchId/cases/:caseId", role: "agency" },
