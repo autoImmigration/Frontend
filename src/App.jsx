@@ -55,96 +55,28 @@ import { getRefreshToken } from "./auth/tokenStore.js";
 import { formatStudentName, formatAlienRegistrationNumber } from "./lib/studentFormat.js";
 import { useUrlPagination, useUrlReset, useUrlState } from "./lib/useUrlState.js";
 import { useModalA11y } from "./lib/useModalA11y.js";
-
-const ROLE_LABELS = {
-  student: "학생",
-  school: "학교",
-  agency: "유학원",
-};
-
-const ROLE_HELP = {
-  student: "국적, 여권번호, 생년월일로 본인 신청 건을 확인합니다.",
-  school: "학교 담당자 계정으로 학생 목록과 신청 상태를 조회합니다.",
-  agency: "유학원 운영 계정으로 신청 건, 문서 상태, ZIP 업로드를 관리합니다.",
-};
-
-const STATUS_CLASS_MAP = {
-  보완: "status statusWarning",
-  반려: "status statusError",
-  완료: "status statusSuccess",
-  제출: "status statusSuccess",
-  미제출: "status statusNeutral",
-  "준비 완료": "status statusNeutral",
-  "접수 완료": "status statusNeutral",
-  "업로드 완료": "status statusSuccess",
-  대기: "status statusNeutral",
-  "처리 중": "status statusNeutral",
-  "부분 완료": "status statusWarning",
-  실패: "status statusError",
-  중단: "status statusError",
-};
-
-const NAV_ITEMS = {
-  student: [{ page: "student-list", label: "신청 현황" }],
-  school: [
-    { page: "school-list", label: "학생 목록" },
-    { page: "school-download", label: "다운로드" },
-  ],
-  agency: [
-    { page: "agency-dashboard", label: "신청 대시보드" },
-    { page: "agency-student-list", label: "학생 목록" },
-    { page: "agency-supplement-list", label: "보완 접수" },
-    { page: "agency-file-list", label: "파일 목록" },
-    { page: "agency-upload", label: "ZIP 업로드" },
-    { page: "agency-upload-history", label: "업로드 내역" },
-    { page: "agency-download", label: "다운로드" },
-  ],
-};
-
-/** 페이지 id → 사람이 읽는 화면 이름. "돌아가기" 버튼 문구를 출발지에 맞추는 데 쓴다. */
-const PAGE_LABELS = Object.fromEntries(
-  Object.values(NAV_ITEMS).flat().map((item) => [item.page, item.label]),
-);
+import { ROLE_LABELS, ROLE_HELP, NAV_ITEMS, PAGE_LABELS } from "./constants/roles.js";
+import {
+  STATUS_CLASS_MAP,
+  BATCH_STATUS_LABELS,
+  ACTIVE_PROCESSING_STATUSES,
+  CASE_STATUS_OPTIONS,
+  TERMINAL_BATCH_STATUSES_SET,
+  REPROCESSABLE_STATUSES,
+} from "./constants/status.js";
+import {
+  SCHOOL_SEARCH_OPTIONS,
+  AGENCY_SEARCH_OPTIONS,
+  ALL_FILTER,
+  STUDENT_FILTER_KEYS,
+  SUPPLEMENT_FILTER_KEYS,
+  VISA_TYPE_OPTIONS,
+} from "./constants/search.js";
+import { emptyOrgForms, EMPTY_UPLOAD_FEEDBACK } from "./constants/upload.js";
 
 export function pageLabel(page, fallback = "목록") {
   return PAGE_LABELS[page] ?? fallback;
 }
-
-const SCHOOL_SEARCH_OPTIONS = [
-  { value: "name", label: "학생명" },
-  { value: "nationality", label: "국적" },
-  { value: "agencyName", label: "유학원명" },
-];
-
-const AGENCY_SEARCH_OPTIONS = [
-  { value: "applicationType", label: "신청 유형" },
-  { value: "visaType", label: "비자 타입" },
-  { value: "schoolName", label: "학교명" },
-  { value: "coordinator", label: "담당자" },
-  { value: "studentName", label: "학생명" },
-];
-
-const ALL_FILTER = "전체";
-
-const emptyOrgForms = {
-  school: { ...loginDefaults.school },
-  agency: { ...loginDefaults.agency },
-};
-
-const EMPTY_UPLOAD_FEEDBACK = {
-  phase: "idle",
-  fileName: "",
-  message: "",
-  batch: null,
-};
-
-const VISA_TYPE_OPTIONS = [
-  { code: "ALIEN_REGISTRATION", label: "외국인등록" },
-  { code: "D2_EXTENSION", label: "D2연장" },
-  { code: "D4_EXTENSION", label: "D4연장" },
-  { code: "STATUS_CHANGE_AND_EXTENSION", label: "세부체류자격 변경 및 연장" },
-  { code: "D2_CHANGE", label: "D2변경" },
-];
 
 // 로컬 타임존 기준 오늘 날짜(YYYY-MM-DD). toISOString()은 UTC라 KST 오전엔 하루 밀리므로 직접 조립한다.
 function todayLocalIso() {
@@ -158,30 +90,6 @@ const EMPTY_UPLOAD_FORM = {
   receiptDate: todayLocalIso(),
   schoolId: "",
   visaTypeCode: "",
-};
-
-const BATCH_STATUS_LABELS = {
-  READY: "준비 완료",
-  RECEIVED: "접수 완료",
-  UPLOADED: "업로드 완료",
-  QUEUED: "대기",
-  PENDING: "대기",
-  PROCESSING: "처리 중",
-  RUNNING: "처리 중",
-  IN_PROGRESS: "처리 중",
-  EXTRACTING: "텍스트 추출 중",
-  VALIDATING: "검증 중",
-  COMPLETED: "완료",
-  SUCCESS: "완료",
-  SUCCEEDED: "완료",
-  PARTIAL_SUCCESS: "부분 완료",
-  NEEDS_REVIEW: "보완",
-  REJECTED: "반려",
-  FAILED: "실패",
-  ERROR: "실패",
-  CANCELED: "중단",
-  CANCELLED: "중단",
-  RESULT_UPLOADED: "완료",
 };
 
 function countByStatus(items, status) {
@@ -703,8 +611,6 @@ function normalizeAgencyUploadBatch(batch, fallback = {}) {
         : [],
   };
 }
-
-const ACTIVE_PROCESSING_STATUSES = new Set(["처리 중", "대기", "텍스트 추출 중", "검증 중"]);
 
 function StatusBadge({ value }) {
   const isActive = ACTIVE_PROCESSING_STATUSES.has(value);
@@ -2501,16 +2407,6 @@ function AgencyDownloadPage({ schools, batches }) {
   );
 }
 
-const CASE_STATUS_OPTIONS = [
-  { key: "DRAFT", label: "임시" },
-  { key: "SUBMITTED", label: "접수" },
-  { key: "RECEIVED", label: "접수 확인" },
-  { key: "NEEDS_REVIEW", label: "검수 필요" },
-  { key: "NEEDS_SUPPLEMENT", label: "보완" },
-  { key: "COMPLETED", label: "완료" },
-  { key: "REJECTED", label: "반려" },
-];
-
 function AgencyDetailPage({ application, selectedDocument, onSelectDocument, onBack, backLabel = "목록", session, onStatusChange, onNoteChange }) {
   const [selectedStatusKey, setSelectedStatusKey] = useState(application.statusKey ?? CASE_STATUS_OPTIONS[0].key);
   const [statusChanging, setStatusChanging] = useState(false);
@@ -3410,12 +3306,6 @@ function toDateKey(value) {
 function receiptDateOf(batch) {
   return toDateKey(batch?.note) || "";
 }
-
-// 초기화 시 한 번에 지울 URL 파라미터 (모듈 상수 — 렌더마다 새 배열을 만들지 않는다)
-// 학생 목록은 '완료'된 케이스만 보여주므로 상태 필터는 두지 않는다 (선택지가 하나뿐이라 의미가 없다)
-const STUDENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "date"];
-// "missing"은 옛 필터(케이스로 대체됨) — 초기화 시 레거시 URL 파라미터를 함께 쓸어내려 남겨둔다.
-const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "case", "date", "missing"];
 
 function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   // 필터·페이지는 URL(?name=..&batch=..&page=2)에 — 새로고침·뒤로가기·링크 공유에서 살아남는다.
@@ -5036,10 +4926,6 @@ const UPLOAD_PIPELINE_STEPS = [
   { key: "extract", label: "텍스트 추출", desc: "LLM으로 필드를 추출하고 케이스에 반영합니다." },
 ];
 
-const TERMINAL_BATCH_STATUSES_SET = new Set([
-  "COMPLETED", "RESULT_UPLOADED", "NEEDS_REVIEW", "FAILED", "CANCELED", "CANCELLED",
-]);
-
 function deriveStepStates(batch) {
   if (!batch) return ["current", "upcoming", "upcoming", "upcoming"];
 
@@ -5111,8 +4997,6 @@ function UploadProcessingSteps({ batch }) {
     </div>
   );
 }
-
-const REPROCESSABLE_STATUSES = new Set(["RESULT_UPLOADED", "NEEDS_REVIEW", "FAILED"]);
 
 // 검토 우선순위 티어 — 업로드 상세 "검토 필요" 목록과 케이스 상세 "검토 n/N" 큐가
 // 반드시 같은 순서가 되도록 공용 함수로 통일 (2026-07-09: 두 화면 순서 불일치 수정).
