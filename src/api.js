@@ -498,9 +498,10 @@ async function downloadBlob(path, filename) {
   URL.revokeObjectURL(url);
 }
 
-export async function downloadGroupPayment(schoolId) {
+/** 단체수납입금표 — 외국인등록 신청 건 전체, 학교별 시트. 파라미터 없음. */
+export async function downloadGroupPayment() {
   await downloadBlob(
-    `/agency/export/group-payment${buildQuery({ schoolId })}`,
+    "/agency/export/group-payment",
     "단체수납입금표.xlsx",
   );
 }
@@ -512,9 +513,11 @@ export async function downloadReceptionList(schoolId) {
   );
 }
 
-export async function downloadStudentRoster(schoolId) {
+/** 학생명단 및 신청현황표 — batchIds(배치 id 배열, 순서 보존) 없으면 전체 케이스. */
+export async function downloadStudentRoster(batchIds) {
+  const joined = Array.isArray(batchIds) && batchIds.length > 0 ? batchIds.join(",") : undefined;
   await downloadBlob(
-    `/agency/export/student-roster${buildQuery({ schoolId })}`,
+    `/agency/export/student-roster${buildQuery({ batchIds: joined })}`,
     "학생명단_및_신청현황표.xlsx",
   );
 }

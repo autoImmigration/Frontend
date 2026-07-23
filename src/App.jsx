@@ -54,6 +54,7 @@ import {
 import { getRefreshToken } from "./auth/tokenStore.js";
 import { formatStudentName, formatAlienRegistrationNumber } from "./lib/studentFormat.js";
 import { useUrlPagination, useUrlReset, useUrlState } from "./lib/useUrlState.js";
+import { useModalA11y } from "./lib/useModalA11y.js";
 
 const ROLE_LABELS = {
   student: "학생",
@@ -145,8 +146,16 @@ const VISA_TYPE_OPTIONS = [
   { code: "D2_CHANGE", label: "D2변경" },
 ];
 
+// 로컬 타임존 기준 오늘 날짜(YYYY-MM-DD). toISOString()은 UTC라 KST 오전엔 하루 밀리므로 직접 조립한다.
+function todayLocalIso() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 const EMPTY_UPLOAD_FORM = {
-  receiptDate: new Date().toISOString().split("T")[0],
+  receiptDate: todayLocalIso(),
   schoolId: "",
   visaTypeCode: "",
 };
@@ -2104,10 +2113,21 @@ function SchoolDownloadPage({ students }) {
   );
 }
 
-function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownload }) {
-  const [search, setSearch] = useState("");
-  // 요약 카드 클릭으로 배치 테이블을 상태별 필터링: null(전체) | "review" | "done" | "failed"
-  const [statusFilter, setStatusFilter] = useState(null);
+function AgencyDashboardPage({ batches, applications = [], onOpenDetail, onOpenUpload, onOpenDownload }) {
+  // 필터·페이지를 URL에 둔다 — 상세를 보고 돌아와도 유지되고, 3초 폴링에 페이지가 1로 튕기지 않는다.
+  const [search, setSearch] = useUrlState("q", "");
+  // 배치 payload엔 학교명이 없어 케이스(신청) 데이터에서 배치별 학교명을 유추한다.
+  const schoolByBatch = useMemo(() => {
+    const map = new Map();
+    applications.forEach((a) => {
+      if (a.intakeBatch && a.schoolName && !map.has(a.intakeBatch)) {
+        map.set(a.intakeBatch, a.schoolName);
+      }
+    });
+    return map;
+  }, [applications]);
+  // 요약 카드 클릭으로 배치 테이블을 상태별 필터링: ""(전체) | "review" | "done" | "failed"
+  const [statusFilter, setStatusFilter] = useUrlState("status", "");
 
   const filtered = useMemo(() => {
     const matchesStatus = (b) => {
@@ -2126,14 +2146,10 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
   }, [batches, search, statusFilter]);
 
   const toggleStatusFilter = (key) => {
-    setStatusFilter((prev) => (prev === key ? null : key));
+    setStatusFilter(statusFilter === key ? "" : key);
   };
 
-  const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = usePagination(
-    filtered,
-    10,
-    `${search}|${statusFilter ?? ""}`,
-  );
+  const { currentPage, setCurrentPage, totalPages, paginatedItems: pagedBatches } = useUrlPagination(filtered, 10);
   const totalStudents = batches.reduce((s, b) => s + (b.studentCount ?? 0), 0);
   const doneCount = batches.filter((b) => b.status === "완료").length;
   // 처리는 끝났지만 검토/보완이 필요한 배치 (NEEDS_REVIEW → "보완", PARTIAL_SUCCESS → "부분 완료")
@@ -2165,7 +2181,7 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
             value: `${batches.length}건`,
             hint: "등록된 ZIP 업로드 수",
             tone: "tonePrimary",
-            onClick: () => setStatusFilter(null),
+            onClick: () => setStatusFilter(""),
           },
           {
             label: "검토 필요",
@@ -2240,7 +2256,7 @@ function AgencyDashboardPage({ batches, onOpenDetail, onOpenUpload, onOpenDownlo
                   <tr key={batch.id}>
                     <td data-label="업로드 일시">{batch.uploadedAt}</td>
                     <td data-label="ZIP 파일">{batch.fileName || "—"}</td>
-                    <td data-label="학교명">{batch.schoolName ?? "—"}</td>
+                    <td data-label="학교명">{batch.schoolName || schoolByBatch.get(batch.id) || "미지정"}</td>
                     <td data-label="학생 수">{batch.studentCount == null ? "—" : `${batch.studentCount}명`}</td>
                     <td data-label="상태"><StatusBadge value={batch.status} /></td>
                     <td data-label="접수일">{receiptDateOf(batch) || "—"}</td>
@@ -2312,7 +2328,151 @@ function ExcelExportCard({ title, description, schools, onExport }) {
   );
 }
 
-function AgencyDownloadPage({ schools }) {
+/** 입력 없이 버튼 하나로 내려받는 추출 카드 (단체수납입금표용). */
+function SimpleExportCard({ title, description, onExport }) {
+  const [isExporting, setIsExporting] = useState(false);
+
+  async function handleExport() {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      await onExport();
+    } catch (err) {
+      alert(`다운로드 실패: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  return (
+    <section className="surfaceCard">
+      <div className="sectionHeading">
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button type="button" className="primaryButton" onClick={handleExport} disabled={isExporting}>
+          {isExporting ? "추출 중..." : "엑셀 내보내기"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** 학생명단 및 신청현황표 — 케이스(배치) 선택 모달을 거쳐 내보내는 카드. */
+function RosterExportCard({ title, description, batches }) {
+  const [showModal, setShowModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const modalRef = useModalA11y(showModal, () => setShowModal(false));
+
+  const allSelected = batches.length > 0 && selectedIds.length === batches.length;
+
+  function toggleBatch(id) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  }
+
+  function toggleAll() {
+    setSelectedIds(allSelected ? [] : batches.map((b) => b.id));
+  }
+
+  async function handleExport() {
+    if (isExporting || selectedIds.length === 0) return;
+    setIsExporting(true);
+    try {
+      // 전달 순서 = 화면 목록 순서 (엑셀 행 순서가 배치 목록 순서를 따라간다)
+      const ordered = batches.filter((b) => selectedIds.includes(b.id)).map((b) => b.id);
+      await downloadStudentRoster(ordered);
+      setShowModal(false);
+    } catch (err) {
+      alert(`다운로드 실패: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  return (
+    <section className="surfaceCard">
+      <div className="sectionHeading">
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          className="primaryButton"
+          onClick={() => { setSelectedIds(batches.map((b) => b.id)); setShowModal(true); }}
+        >
+          케이스 선택 후 내보내기
+        </button>
+      </div>
+
+      {showModal && (
+        <div className="caseModalOverlay" onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}>
+          <div className="caseModalBackdrop" />
+          <div className="caseModal" ref={modalRef} tabIndex={-1}
+            role="dialog" aria-modal="true" aria-labelledby="rosterCaseModalTitle">
+            <div className="caseModalHead">
+              <div>
+                <h2 className="caseModalTitle" id="rosterCaseModalTitle">케이스 선택</h2>
+                <p className="caseModalSub">선택한 케이스의 학생들이 목록 순서대로 엑셀에 담깁니다.</p>
+              </div>
+              <button type="button" className="caseModalClose" onClick={() => setShowModal(false)} aria-label="닫기">✕</button>
+            </div>
+
+            {batches.length === 0 ? (
+              <EmptyState title="케이스가 없습니다." description="ZIP 파일을 업로드하면 케이스가 생성됩니다." />
+            ) : (
+              <div className="caseChecklistRows">
+                <label className={`caseChecklistRow${allSelected ? " isChecked" : ""}`}>
+                  <input
+                    type="checkbox"
+                    className="caseChecklistCheckbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                  />
+                  <span className="caseChecklistLabel"><strong>모든 케이스</strong></span>
+                  <span className="cellMeta">{batches.length}건</span>
+                </label>
+                {batches.map((batch) => {
+                  const checked = selectedIds.includes(batch.id);
+                  return (
+                    <label key={batch.id} className={`caseChecklistRow${checked ? " isChecked" : ""}`}>
+                      <input
+                        type="checkbox"
+                        className="caseChecklistCheckbox"
+                        checked={checked}
+                        onChange={() => toggleBatch(batch.id)}
+                      />
+                      <span className="caseChecklistLabel">
+                        {batch.displayName || batch.fileName}
+                        {batch.studentCount != null && <span className="cellMeta">{batch.studentCount}명</span>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="caseModalActions hasTopGap">
+              <button type="button" className="secondaryButton" onClick={() => setShowModal(false)}>취소</button>
+              <button
+                type="button"
+                className="primaryButton"
+                onClick={handleExport}
+                disabled={isExporting || selectedIds.length === 0}
+              >
+                {isExporting ? "추출 중..." : `선택 ${selectedIds.length}건 내보내기`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AgencyDownloadPage({ schools, batches }) {
   return (
     <>
       <PageHeader
@@ -2320,23 +2480,21 @@ function AgencyDownloadPage({ schools }) {
         description="단체수납입금표·접수명단·학생명단 및 신청현황표를 양식 엑셀로 추출합니다."
       />
       <div className="downloadPageGrid">
-        <ExcelExportCard
+        <SimpleExportCard
           title="단체수납입금표"
-          description="학교별 신청 케이스를 단체수납입금표 양식(엑셀)으로 내보냅니다."
-          schools={schools}
+          description="외국인등록 신청 건 전체를 학교별 시트로 나눠 내보냅니다."
           onExport={downloadGroupPayment}
         />
         <ExcelExportCard
           title="접수명단 (대학교 제출용)"
-          description="접수일자·서비스항목·영문성명·등록번호·주소·연락처가 담긴 단체접수명단을 내보냅니다."
+          description="외국인등록 신청 건의 접수일자·서비스항목·영문성명·등록번호·주소·연락처를 내보냅니다."
           schools={schools}
           onExport={downloadReceptionList}
         />
-        <ExcelExportCard
+        <RosterExportCard
           title="학생명단 및 신청현황표"
-          description="접수·학생 정보를 채운 신청현황표를 내보냅니다. 접수결과·회계 항목은 빈칸으로 생성됩니다."
-          schools={schools}
-          onExport={downloadStudentRoster}
+          description="선택한 케이스의 학생 정보를 채운 신청현황표를 내보냅니다. 접수결과·회계 항목은 빈칸으로 생성됩니다."
+          batches={batches}
         />
       </div>
     </>
@@ -3256,7 +3414,8 @@ function receiptDateOf(batch) {
 // 초기화 시 한 번에 지울 URL 파라미터 (모듈 상수 — 렌더마다 새 배열을 만들지 않는다)
 // 학생 목록은 '완료'된 케이스만 보여주므로 상태 필터는 두지 않는다 (선택지가 하나뿐이라 의미가 없다)
 const STUDENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "date"];
-const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "missing", "date"];
+// "missing"은 옛 필터(케이스로 대체됨) — 초기화 시 레거시 URL 파라미터를 함께 쓸어내려 남겨둔다.
+const SUPPLEMENT_FILTER_KEYS = ["name", "nationality", "visa", "school", "case", "date", "missing"];
 
 function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
   // 필터·페이지는 URL(?name=..&batch=..&page=2)에 — 새로고침·뒤로가기·링크 공유에서 살아남는다.
@@ -3314,7 +3473,7 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
     <>
       <PageHeader
         title="학생 목록"
-        description="등록된 학생 목록입니다. 여러 필터를 동시에 적용할 수 있습니다."
+        description="검토 완료된 학생만 표시됩니다. 검토 대기·보완 필요 학생은 '보완 접수'에서 처리한 뒤 [검토 완료]를 누르면 이 목록에 나타납니다."
       />
 
       <section className="surfaceCard">
@@ -3367,9 +3526,6 @@ function AgencyStudentListPage({ applications, onOpenDetail, onExclude }) {
                     {/* 배치명(비자타입 · 일시)은 옆 '비자 타입' 열과 겹쳐 중복이었다 → 업로드 일시 + 배치 내 순번만 */}
                     <td data-label="업로드 날짜">
                       {a.uploadedAt || a.applicationDate || "—"}
-                      {a.batchOrderIndex ? (
-                        <span className="cellMeta">{a.batchOrderIndex}번째 스캔</span>
-                      ) : null}
                     </td>
                     <td data-label="상태">
                       <StatusBadge value={a.status} />
@@ -3410,13 +3566,14 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
   const [visaFilter, setVisaFilter] = useUrlState("visa", ALL_FILTER);
   const [schoolFilter, setSchoolFilter] = useUrlState("school", ALL_FILTER);
   const [dateFilter, setDateFilter] = useUrlState("date", "");
-  const [missingFilter, setMissingFilter] = useUrlState("missing", ALL_FILTER); // 누락 서류 건수 구간
+  const [caseFilter, setCaseFilter] = useUrlState("case", ALL_FILTER); // 케이스(ZIP 업로드 배치)
   const resetFilters = useUrlReset(SUPPLEMENT_FILTER_KEYS);
 
-  // 이 화면 대상 = 누락 있음(미완료) + 추출 실패. 옵션은 이 모수에서만 뽑아 빈 옵션을 막는다.
+  // 이 화면 대상 = '완료'가 아닌 모든 케이스 + 추출 실패. 옵션은 이 모수에서만 뽑아 빈 옵션을 막는다.
+  // (누락 0건이어도 검토 완료 전이면 여기 '검토 대기'에 보인다 — 학생목록/보완접수 어디에도 안 잡히는 사각지대 방지)
   const targetApps = useMemo(
     () => applications.filter(
-      (a) => isExtractionFailed(a) || ((a.missingCount ?? 0) > 0 && a.status !== "완료"),
+      (a) => isExtractionFailed(a) || a.status !== "완료",
     ),
     [applications],
   );
@@ -3424,43 +3581,54 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
   const nationalityOptionsList = [...new Set(targetApps.map((a) => a.nationality).filter(Boolean))];
   const visaOptionsList = [...new Set(targetApps.map((a) => a.visaType).filter(Boolean))];
   const schoolOptionsList = [...new Set(targetApps.map((a) => a.schoolName).filter(Boolean))];
-  // 학생 목록과 같은 원칙 — 배치를 고르는 기준은 "언제 올린 건지"다.
-  const matchesFilters = (a) => {
+  // 케이스(ZIP 업로드 배치) 옵션 — 라벨은 "비자타입 · 업로드 일시"로 사람이 알아보게, 값은 배치 id
+  const caseOptions = useMemo(() => {
+    const map = new Map();
+    targetApps.forEach((a) => {
+      if (a.intakeBatch && !map.has(a.intakeBatch)) {
+        map.set(a.intakeBatch, [a.visaType, a.uploadedAt].filter(Boolean).join(" · ") || a.intakeBatch);
+      }
+    });
+    // 선택된 케이스가 대상 모수에 없으면(전부 검토 완료 등) 옵션에 넣어 '보이지 않는 필터'가 되지 않게 한다
+    if (caseFilter !== ALL_FILTER && !map.has(caseFilter)) {
+      map.set(caseFilter, "선택한 케이스 (현재 대상 없음)");
+    }
+    return [...map.entries()].map(([value, label]) => ({ value, label }));
+  }, [targetApps, caseFilter]);
+
+  const hasActiveFilter =
+    nameFilter.trim() !== "" || nationalityFilter !== ALL_FILTER || visaFilter !== ALL_FILTER
+    || schoolFilter !== ALL_FILTER || caseFilter !== ALL_FILTER || dateFilter !== "";
+
+  // 세 목록을 한 번의 순회로 분류한다. 예전엔 predicate·filterKey 문자열·failedStudents 복제본을
+  // 손으로 4곳 맞춰야 했고 하나라도 빠지면 조용히 낡은 목록이 나왔다. 이제 필터값을 deps에 직접 둔다.
+  const { supplementStudents, reviewPendingStudents, failedStudents } = useMemo(() => {
     const nameQuery = nameFilter.trim().toLowerCase();
-    const missing = a.missingCount ?? 0;
-    const matchesMissing =
-      missingFilter === ALL_FILTER
-      || (missingFilter === "1-2" && missing >= 1 && missing <= 2)
-      || (missingFilter === "3-5" && missing >= 3 && missing <= 5)
-      || (missingFilter === "6+" && missing >= 6);
-    return (!nameQuery || (a.studentName ?? "").toLowerCase().includes(nameQuery))
-      && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
+    const matchesCommon = (a) =>
+      (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
       && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
       && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
-      && (!dateFilter || toDateKey(a.uploadedAt) === dateFilter)
-      && matchesMissing;
-  };
-
-  const filterKey = `${nameFilter}|${nationalityFilter}|${visaFilter}|${schoolFilter}|${dateFilter}|${missingFilter}`;
-
-  // 관리자가 '완료' 승인한 건은 학생목록으로 가므로 보완목록에서 제외 (학생은 둘 중 한 곳에만)
-  const supplementStudents = useMemo(
-    () => buildStudentMap(targetApps.filter(
-      (a) => !isExtractionFailed(a) && matchesFilters(a),
-    )),
-    [targetApps, filterKey],
-  );
-  // 추출 실패는 학생명·누락건수가 없을 수 있어 이름/누락 필터는 적용하지 않는다
-  const failedStudents = useMemo(
-    () => buildStudentMap(targetApps.filter(
-      (a) => isExtractionFailed(a)
-        && (nationalityFilter === ALL_FILTER || a.nationality === nationalityFilter)
-        && (visaFilter === ALL_FILTER || a.visaType === visaFilter)
-        && (schoolFilter === ALL_FILTER || a.schoolName === schoolFilter)
-        && (!dateFilter || toDateKey(a.uploadedAt) === dateFilter),
-    )),
-    [targetApps, filterKey],
-  );
+      && (caseFilter === ALL_FILTER || a.intakeBatch === caseFilter)
+      && (!dateFilter || toDateKey(a.uploadedAt) === dateFilter);
+    const supplement = [];
+    const pending = [];
+    const failed = [];
+    targetApps.forEach((a) => {
+      if (!matchesCommon(a)) return;
+      if (isExtractionFailed(a)) {
+        failed.push(a); // 추출 실패는 이름이 없을 수 있어 이름 필터는 적용하지 않는다
+      } else if (!nameQuery || (a.studentName ?? "").toLowerCase().includes(nameQuery)) {
+        // 누락 있으면 '누락 서류', 없으면 '검토 대기'(완비됐지만 검토 완료 전 — 학생목록 사각지대 방지)
+        if ((a.missingCount ?? 0) > 0) supplement.push(a);
+        else pending.push(a);
+      }
+    });
+    return {
+      supplementStudents: buildStudentMap(supplement),
+      reviewPendingStudents: buildStudentMap(pending),
+      failedStudents: buildStudentMap(failed),
+    };
+  }, [targetApps, nameFilter, nationalityFilter, visaFilter, schoolFilter, caseFilter, dateFilter]);
 
   const SupplementTable = ({ rows, isFailed }) => {
     // 이 목록의 순서 = 케이스 상세의 "보완 접수 n/N" 및 이전/다음 이동 기준
@@ -3489,9 +3657,6 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
               <td data-label="학교명">{s.schoolName}</td>
               <td data-label="업로드 날짜">
                 {s.latestCase?.uploadedAt || "—"}
-                {s.latestCase?.batchOrderIndex ? (
-                  <span className="cellMeta">{s.latestCase.batchOrderIndex}번째 스캔</span>
-                ) : null}
               </td>
               <td data-label="누락 서류">
                 {isFailed ? "추출 실패" : `${s.latestCase?.missingCount ?? 0}건`}
@@ -3523,7 +3688,7 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
     <>
       <PageHeader
         title="보완 접수"
-        description="누락 서류가 있거나 추출에 실패한 케이스를 처리합니다."
+        description="누락 서류 · 추출 실패 · 검토 대기 케이스를 처리합니다. 검토 완료된 학생만 학생 목록에 나타납니다."
       />
 
       <section className="surfaceCard">
@@ -3534,20 +3699,13 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
             onChange: setNameFilter,
             placeholder: "학생명으로 검색 (추출 실패 건은 이름이 없어 제외됩니다)",
           }}
-          resultLabel={`${supplementStudents.length + failedStudents.length}명`}
+          resultLabel={`${supplementStudents.length + reviewPendingStudents.length + failedStudents.length}명`}
           onReset={resetFilters}
           filters={[
             { key: "nationality", label: "국적", value: nationalityFilter, onChange: setNationalityFilter, options: toOptions(nationalityOptionsList) },
             { key: "visa", label: "비자 타입", value: visaFilter, onChange: setVisaFilter, options: toOptions(visaOptionsList) },
             { key: "school", label: "학교", value: schoolFilter, onChange: setSchoolFilter, options: toOptions(schoolOptionsList) },
-            {
-              key: "missing", label: "누락 서류", value: missingFilter, onChange: setMissingFilter,
-              options: [
-                { value: "1-2", label: "1~2건" },
-                { value: "3-5", label: "3~5건" },
-                { value: "6+", label: "6건 이상" },
-              ],
-            },
+            { key: "case", label: "케이스", value: caseFilter, onChange: setCaseFilter, options: caseOptions },
             { key: "date", label: "업로드 날짜", type: "date", value: dateFilter, onChange: setDateFilter },
           ]}
         />
@@ -3563,6 +3721,16 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
         </section>
       )}
 
+      {reviewPendingStudents.length > 0 && (
+        <section className="surfaceCard" style={{ borderLeft: "3px solid var(--primary)" }}>
+          <div className="sectionHeading">
+            <h2>검토 대기 <span style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--primary)", marginLeft: 6 }}>{reviewPendingStudents.length}명</span></h2>
+            <p>서류는 완비됐지만 아직 검토 완료 전인 학생입니다. "처리하기" 클릭 → 내용 확인 후 [검토 완료]를 누르면 학생 목록으로 이동합니다.</p>
+          </div>
+          <SupplementTable rows={reviewPendingStudents} isFailed={false} />
+        </section>
+      )}
+
       {failedStudents.length > 0 && (
         <section className="surfaceCard" style={{ borderLeft: "3px solid var(--danger)" }}>
           <div className="sectionHeading">
@@ -3573,9 +3741,13 @@ function AgencySupplementListPage({ applications, onSupplementRequest }) {
         </section>
       )}
 
-      {supplementStudents.length === 0 && failedStudents.length === 0 && (
+      {supplementStudents.length === 0 && reviewPendingStudents.length === 0 && failedStudents.length === 0 && (
         <section className="surfaceCard">
-          <EmptyState title="보완이 필요한 케이스가 없습니다." description="모든 학생이 정상 접수되었습니다." />
+          {hasActiveFilter ? (
+            <EmptyState title="조건에 맞는 케이스가 없습니다." description="필터를 바꾸거나 초기화한 뒤 다시 확인해 주세요." />
+          ) : (
+            <EmptyState title="처리할 케이스가 없습니다." description="모든 학생이 검토 완료되어 학생 목록에 반영되었습니다." />
+          )}
         </section>
       )}
     </>
@@ -3601,6 +3773,9 @@ function AgencyUploadPage({
   const missingSchool = !uploadForm.schoolId;
   const missingVisaType = !uploadForm.visaTypeCode;
   const canSubmit = Boolean(selectedZipFile) && !isUploading && !missingSchool && !missingVisaType;
+  // 첫 진입부터 빨간 테두리로 겁주지 않는다 — ZIP을 골라 업로드 의사가 드러난 뒤에만 필수 누락을 강조.
+  const showSchoolError = Boolean(selectedZipFile) && missingSchool;
+  const showVisaError = Boolean(selectedZipFile) && missingVisaType;
 
   return (
     <>
@@ -3608,11 +3783,6 @@ function AgencyUploadPage({
         onBack={onBack}
         title="ZIP 업로드"
         description="접수 정보를 입력하고 스캔본 ZIP 파일을 업로드합니다."
-        actions={
-          <button type="button" className="secondaryButton" onClick={onOpenHistory}>
-            업로드 내역 보기
-          </button>
-        }
       />
 
       <section className="surfaceCard">
@@ -3636,7 +3806,7 @@ function AgencyUploadPage({
             <select
               value={uploadForm.schoolId}
               onChange={(e) => onUploadFormChange("schoolId", e.target.value)}
-              style={missingSchool ? { borderColor: "var(--danger)" } : undefined}
+              style={showSchoolError ? { borderColor: "var(--danger)" } : undefined}
             >
               <option value="">학교 선택 (필수)</option>
               {schools.map((s) => (
@@ -3650,7 +3820,7 @@ function AgencyUploadPage({
             <select
               value={uploadForm.visaTypeCode}
               onChange={(e) => onUploadFormChange("visaTypeCode", e.target.value)}
-              style={missingVisaType ? { borderColor: "var(--danger)" } : undefined}
+              style={showVisaError ? { borderColor: "var(--danger)" } : undefined}
             >
               <option value="">신청 타입 선택 (필수)</option>
               {VISA_TYPE_OPTIONS.map((opt) => (
@@ -3974,12 +4144,16 @@ function BatchCaseDetailPage({
   reviewQueue = [], queueLabel = "검토", onNavigateCase,
 }) {
   const [selectedDocCode, setSelectedDocCode] = useState(caseData.documents[0]?.code ?? null);
-  // 검토 큐(= 들어온 목록) 내 위치와 앞/뒤 케이스
-  const _qIdx = reviewQueue.indexOf(caseData.id);
-  const _prevReviewId = _qIdx > 0 ? reviewQueue[_qIdx - 1] : null;
+  // 검토 큐(= 들어온 목록) 내 위치와 앞/뒤 케이스.
+  // 큐는 이 케이스를 여는 순간으로 고정한다(스냅샷). 안 그러면 [검토 완료] 직후 라이브 큐에서
+  // 현재 케이스가 빠지면서 위치가 -1이 돼 "다음"이 큐 맨 앞으로 튀고 "이전"이 사라진다.
+  // 다른 케이스로 이동하면 key=caseId 리마운트로 큐가 새로 잡힌다.
+  const [reviewQueueSnapshot] = useState(reviewQueue);
+  const _qIdx = reviewQueueSnapshot.indexOf(caseData.id);
+  const _prevReviewId = _qIdx > 0 ? reviewQueueSnapshot[_qIdx - 1] : null;
   const _nextReviewId = _qIdx >= 0
-    ? (_qIdx + 1 < reviewQueue.length ? reviewQueue[_qIdx + 1] : null)
-    : (reviewQueue.find((id) => id !== caseData.id) ?? null);
+    ? (_qIdx + 1 < reviewQueueSnapshot.length ? reviewQueueSnapshot[_qIdx + 1] : null)
+    : (reviewQueueSnapshot.find((id) => id !== caseData.id) ?? null);
   const isOtherDoc = selectedDocCode?.startsWith("other:");
   const otherFilename = isOtherDoc ? selectedDocCode.slice(6) : null;
   const selectedDoc = isOtherDoc ? null : (caseData.documents.find((d) => d.code === selectedDocCode) ?? null);
@@ -4102,6 +4276,10 @@ function BatchCaseDetailPage({
     enrollment_passport_number: "재학증명서 여권번호",
     enrollment_birth_date: "재학증명서 생년월일",
   };
+  // 잔고증명·부동산계약서는 추출 난도가 높아 보수적으로 운영 —
+  // 추출 실패나 검수 지적을 검토 이슈로 올리지 않는다 (서류 자체가 미제출인 경우는 계속 표시).
+  const REVIEW_EXEMPT_FIELD_PREFIXES = ["bank_", "lease_", "lessee_"];
+  const REVIEW_EXEMPT_DOC_CODES = new Set(["BANK_BALANCE_CERTIFICATE", "REAL_ESTATE_CONTRACT"]);
   const reviewIssues = useMemo(() => {
     const issues = [];
     let validations = {};
@@ -4111,6 +4289,7 @@ function BatchCaseDetailPage({
       validations = {};
     }
     Object.entries(validations).forEach(([key, v]) => {
+      if (REVIEW_EXEMPT_FIELD_PREFIXES.some((prefix) => key.startsWith(prefix))) return;
       if (v && (v.status === "invalid" || v.status === "review")) {
         issues.push({ type: "field", key, label: CHECKLIST_FIELD_LABEL[key] || key, detail: v.detail || "" });
       }
@@ -4118,7 +4297,7 @@ function BatchCaseDetailPage({
     caseData.documents.forEach((d) => {
       if (d.status === "미제출") {
         issues.push({ type: "missing", code: d.code, label: `누락: ${d.name}`, detail: "필수 서류가 제출되지 않았습니다." });
-      } else if (typeof d.note === "string" && d.note.trim()) {
+      } else if (typeof d.note === "string" && d.note.trim() && !REVIEW_EXEMPT_DOC_CODES.has(d.code)) {
         issues.push({ type: "docReview", code: d.code, label: `검수: ${d.name}`, detail: d.note });
       }
     });
@@ -4140,6 +4319,10 @@ function BatchCaseDetailPage({
   const [uploadFile, setUploadFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [linkError, setLinkError] = useState("");
+
+  // 모달 접근성(Esc·포커스 트랩·복귀)
+  const supplementModalRef = useModalA11y(showPanel, () => setShowPanel(false));
+  const uploadModalRef = useModalA11y(Boolean(uploadModalDoc), () => { setUploadModalDoc(null); setUploadFile(null); });
 
   // 스캔 → 서류 직접 매핑 (OCR 오분류 / 기타 스캔 교정)
   const [mapping, setMapping] = useState(false);
@@ -4254,6 +4437,8 @@ function BatchCaseDetailPage({
       await requestSupplement(batchId, caseData.id, items, globalMessage.trim());
       setShowPanel(false);
       setGlobalMessage("");
+      // 케이스 상태·목록이 즉시 반영되도록 갱신 (안 하면 상세 칩과 복귀한 목록이 전송 전 상태로 남음)
+      await onRefresh?.();
       fetchCaseActivities(caseData.id).then((list) => setActivities(Array.isArray(list) ? list : [])).catch(() => {});
     } catch (err) {
       alert(err.message);
@@ -4324,13 +4509,14 @@ function BatchCaseDetailPage({
         <div className="caseModalOverlay"
           onClick={(e) => { if (e.target === e.currentTarget) setShowPanel(false); }}>
           <div className="caseModalBackdrop" />
-          <div className="caseModal isWide">
+          <div className="caseModal isWide" ref={supplementModalRef} tabIndex={-1}
+            role="dialog" aria-modal="true" aria-labelledby="supplementModalTitle">
             <div className="caseModalHead">
               <div>
-                <h2 className="caseModalTitle">보완 요청 작성</h2>
+                <h2 className="caseModalTitle" id="supplementModalTitle">보완 요청 작성</h2>
                 <p className="caseModalSub">보완이 필요한 서류를 선택하고 사유를 입력하세요.</p>
               </div>
-              <button type="button" onClick={() => setShowPanel(false)} className="caseModalClose">✕</button>
+              <button type="button" onClick={() => setShowPanel(false)} className="caseModalClose" aria-label="닫기">✕</button>
             </div>
 
             <div className="caseChecklistRows">
@@ -4370,10 +4556,11 @@ function BatchCaseDetailPage({
         <div className="caseModalOverlay"
           onClick={(e) => { if (e.target === e.currentTarget) { setUploadModalDoc(null); setUploadFile(null); } }}>
           <div className="caseModalBackdrop" />
-          <div className="caseModal isNarrow">
+          <div className="caseModal isNarrow" ref={uploadModalRef} tabIndex={-1}
+            role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
             <div className="caseModalHead">
-              <h2 className="caseModalTitle">서류 업로드</h2>
-              <button type="button" onClick={() => { setUploadModalDoc(null); setUploadFile(null); }} className="caseModalClose">✕</button>
+              <h2 className="caseModalTitle" id="uploadModalTitle">서류 업로드</h2>
+              <button type="button" onClick={() => { setUploadModalDoc(null); setUploadFile(null); }} className="caseModalClose" aria-label="닫기">✕</button>
             </div>
             <p className="caseModalDesc">
               <strong>{uploadModalDoc.name}</strong> 서류 파일을 선택하세요. 관리자가 직접 올리는 서류이므로 업로드 즉시 제출 처리됩니다.
@@ -4450,7 +4637,12 @@ function BatchCaseDetailPage({
                     <div
                       key={filename}
                       className={`documentStatusButton caseOtherItem${selectedDocCode === `other:${filename}` ? " isActive" : ""}${checked ? " isChecked" : ""}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedDocCode(`other:${filename}`)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedDocCode(`other:${filename}`); }
+                      }}
                     >
                       {scanTidyMode && (
                         <input
@@ -4459,6 +4651,7 @@ function BatchCaseDetailPage({
                           onClick={(e) => e.stopPropagation()}
                           onChange={() => toggleOther(filename)}
                           className="caseTidyCheckbox"
+                          aria-label={`${filename} 선택`}
                         />
                       )}
                       <div className="caseOtherBody">
@@ -4798,7 +4991,19 @@ function BatchCaseDetailPage({
 
           {/* 보완 요청 버튼 */}
           {!showPanel && (
-            <button type="button" className="primaryButton caseFooterAction" onClick={() => setShowPanel(true)}>
+            <button
+              type="button"
+              className="primaryButton caseFooterAction"
+              onClick={() => {
+                // 열 때마다 현재 문서 상태 기준으로 기본 체크를 다시 계산한다.
+                // (직전에 업로드해 제출된 서류가 미제출 시점의 체크로 남아 보완 요청에 끼는 것 방지)
+                const fresh = {};
+                caseData.documents.forEach((d) => { if (d.status === "미제출") fresh[d.code] = true; });
+                setCheckedDocs(fresh);
+                setReasons({});
+                setShowPanel(true);
+              }}
+            >
               보완 요청 작성
             </button>
           )}
@@ -5814,7 +6019,7 @@ export default function App() {
     setAgencyBatchId(null);
     setReviewContext(null);
     setUploadFeedback(EMPTY_UPLOAD_FEEDBACK);
-    setUploadForm({ ...EMPTY_UPLOAD_FORM, receiptDate: new Date().toISOString().split("T")[0] });
+    setUploadForm({ ...EMPTY_UPLOAD_FORM, receiptDate: todayLocalIso() });
     setSelectedZipFile(null);
   }
 
@@ -6302,6 +6507,7 @@ export default function App() {
       return (
         <AgencyDashboardPage
           batches={agencyUploadBatches}
+          applications={agencyApplications}
           onOpenDetail={openAgencyUploadBatchDetail}
           onOpenUpload={() => goToPage("agency-upload", {}, { from: page })}
           onOpenDownload={() => goToPage("agency-download", {}, { from: page })}
@@ -6431,7 +6637,7 @@ export default function App() {
 
     if (page === "agency-download") {
       return (
-        <AgencyDownloadPage schools={schools} />
+        <AgencyDownloadPage schools={schools} batches={agencyUploadBatches} />
       );
     }
 

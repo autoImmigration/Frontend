@@ -18,7 +18,7 @@
   --text-strong: #0f172a;
   --text-main: #334155;
   --text-muted: #64748b;
-  --text-soft: #94a3b8;
+  --text-soft: #667085;
   --primary: #2563eb;
   --primary-deep: #1d4ed8;
   --primary-soft: #eff6ff;
@@ -1087,15 +1087,14 @@ select:focus {
 }
 
 .uploadDropzone {
-  min-height: 220px;
-  padding: 32px;
+  padding: 22px 20px;
   border: 1px dashed #bfd4f8;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #f8fbff;
   display: grid;
   place-items: center;
   text-align: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .uploadDropzone.isUploading {
@@ -1104,7 +1103,7 @@ select:focus {
 }
 
 .uploadDropzone strong {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .filePicker {
@@ -1192,7 +1191,6 @@ select:focus {
   border-style: solid;
   border-color: #86b5f8;
   background: #f0f7ff;
-  min-height: 140px;
 }
 
 .selectedFileInfo {
@@ -2731,6 +2729,10 @@ button.summaryItemClickable.isActiveFilter {
   margin-top: 0;
   flex: 1;
   overflow-y: auto;
+  /* 서류가 적어도 위에서부터 촘촘히 — 레일 높이에 맞춰 균등 분산되지 않게 */
+  align-content: start;
+  /* 서류가 많으면 목록 안에서만 스크롤 (레일이 화면을 넘어 늘어나지 않게) */
+  max-height: calc(100vh - 280px);
 }
 
 .caseDocName {
